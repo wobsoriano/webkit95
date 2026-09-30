@@ -1,0 +1,11 @@
+# Build output, all regenerable
+.build/
+build/
+*.xcuserstate
+.swiftpm/
+.DS_Store
+
+# Local working notes, evidence and the raw decision trail (screenshots may show other windows)
+decisions.tsv
+docs/build-notes*.md
+docs/evidence/

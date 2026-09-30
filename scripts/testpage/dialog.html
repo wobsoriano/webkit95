@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Dialog Test</title></head>
+<body style="font: 16px -apple-system, sans-serif; padding: 24px">
+<h1>Dialog Test</h1>
+<p><button id="alert">Alert</button> <button id="confirm">Confirm</button> <button id="prompt">Prompt</button>
+<button id="leave">Guard leaving</button></p>
+<p id="out">no dialog yet</p>
+<script>
+  const done = (what) => { document.getElementById('out').textContent = what; document.title = 'Dialog ' + what; };
+  const run = {
+    alert: () => { alert('Hello from the dialog test page'); done('alert:closed'); },
+    confirm: () => done('confirm:' + confirm('Delete everything on this test page?')),
+    prompt: () => done('prompt:' + prompt('Your name?', 'webkit95')),
+    leave: () => { window.onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ''; }; done('leave:guarded'); },
+  };
+  for (const id of Object.keys(run)) document.getElementById(id).addEventListener('click', () => setTimeout(run[id], 0));
+  const auto = new URLSearchParams(location.search).get('auto');
+  if (auto && run[auto]) setTimeout(run[auto], 300);
+</script>
+</body>
+</html>

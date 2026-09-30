@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>OAuth Popup</title></head>
+<body style="font: 16px -apple-system, sans-serif; padding: 40px; background: #fef3c7">
+<h1>Sign in provider</h1>
+<p id="state">Posting to the opener</p>
+<script>
+  // ?close=<ms> calls window.close() that long after posting, like a real sign in popup.
+  const close = Number(new URLSearchParams(location.search).get('close'));
+  if (window.opener) {
+    window.opener.postMessage('token-123', '*');
+    document.getElementById('state').textContent = 'Posted token-123 to the opener';
+  } else {
+    document.getElementById('state').textContent = 'No opener';
+    document.title = 'OAuth Popup without opener';
+  }
+  if (close > 0) setTimeout(() => window.close(), close);
+</script>
+</body></html>

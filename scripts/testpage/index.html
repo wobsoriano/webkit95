@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>webkit95 Smoke</title></head>
+<body style="font: 16px Georgia, serif; padding: 24px">
+<h1>webkit95 Smoke</h1>
+<p><a id="second" href="second.html">Second page</a></p>
+<p><a id="blank" href="second.html" target="_blank">Second page in a new window</a></p>
+<p><button id="autopop">Pop up without a click after 300 ms</button></p>
+<p id="marker">smoke-marker-7731</p>
+<script>
+  if (location.search.includes('autopop')) setTimeout(() => { window.open('second.html'); }, 300);
+</script>
+</body></html>

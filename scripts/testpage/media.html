@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Media Test</title></head>
+<body style="font: 16px -apple-system, sans-serif; padding: 24px">
+<h1>Media Test</h1>
+<p><button id="ask">Use the camera</button></p>
+<p id="out">not asked</p>
+<script>
+  const done = (what) => { document.getElementById('out').textContent = what; document.title = 'Media ' + what; };
+  // Video only: an audio request never reaches CEF's permission handler (docs/build-notes-rust3.md).
+  const ask = () => navigator.mediaDevices.getUserMedia({ video: true })
+    .then((s) => { s.getTracks().forEach((t) => t.stop()); done('granted'); })
+    .catch((e) => done('denied:' + e.name));
+  document.getElementById('ask').addEventListener('click', ask);
+  if (location.search.includes('auto')) setTimeout(ask, 300);
+</script>
+</body>
+</html>

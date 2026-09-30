@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>OAuth Opener</title></head>
+<body style="font: 16px -apple-system, sans-serif; padding: 40px">
+<h1>Sign in with a popup</h1>
+<p><button id="signin">Sign in</button></p>
+<p><a id="noopener" target="_blank" rel="noopener">Open without opener</a></p>
+<p><a id="background" href="second.html" target="_blank">Open second page (Cmd+click for background)</a></p>
+<p id="got">No message yet</p>
+<script>
+  // ?auth=http://localhost:PORT is the other origin that plays the sign in provider.
+  const auth = new URLSearchParams(location.search).get('auth') || location.origin;
+  const close = new URLSearchParams(location.search).get('close') || '';
+  document.getElementById('noopener').href = auth + '/opener-check.html';
+  document.getElementById('signin').addEventListener('click', () => {
+    window.open(auth + '/oauth-popup.html' + (close ? '?close=' + close : ''), 'signin', 'width=480,height=640');
+  });
+  window.addEventListener('message', (e) => {
+    document.getElementById('got').textContent = 'Got ' + e.data + ' from ' + e.origin;
+    document.title = 'Signed in';
+  });
+</script>
+</body></html>

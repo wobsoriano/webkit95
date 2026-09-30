@@ -1,47 +1,49 @@
 # webkit95
 
-A macOS browser on `WKWebView`, written in Swift and dressed as Windows 95 era Internet Explorer 3 and 4, with an AI assistant in the left Explorer Bar that runs [fx](https://fx.sh) over the Agent Client Protocol (ACP). It is an homage and not affiliated with Microsoft. All icons and art are original.
+webkit95 is a macOS browser built on `WKWebView` and styled after Internet Explorer 3 and 4 on Windows 95. The left Explorer Bar holds an AI assistant that talks to [fx](https://fx.sh) over the Agent Client Protocol (ACP). It is an homage. Microsoft has nothing to do with it, and all icons and art are original.
 
 Status, decisions and next steps are in [docs/STATUS.md](docs/STATUS.md).
 
-## What it does
+## Features
 
-- A drawn Windows 95 window frame, menu bar, toolbar, address bar, status bar and dialogs, all in whole pixels with a bundled pixel font.
-- No tabs, like the original. New pages and pop ups open in new windows and keep `window.opener`.
-- Downloads, Find, text size, View Source in a Notepad style window, favorites, and a 1996 start page.
-- An Assistant Explorer Bar that runs `fx acp`. Untrusted page text can be included in the prompt, so the app forces fx into ask mode and every tool request waits in a Windows 95 message box that shows the full request.
+- The app draws the window frame, menu bar, toolbar, address bar, status bar and dialogs itself, in whole pixels, with a bundled pixel font.
+- There are no tabs. A link or script that opens a new page opens a new window and keeps `window.opener`, so sign in pop ups work.
+- It has downloads, Find, text size, View Source in a Notepad style window, favorites and a 1996 start page.
+- The Assistant runs `fx acp` and can send the current page's text with your prompt (a checkbox, on by default). Page text is untrusted, so the app puts fx in ask mode before the first prompt. Every tool request stops in a Windows 95 message box that shows the full request until you allow or reject it.
 
 ## Requirements
 
-- macOS 14 or later, Xcode with Swift 6.
-- Optional, [fx](https://fx.sh) for the assistant. Install it with `curl -fsSL https://fx.sh/setup.sh | bash`, then run `fx` and type `/provider` to connect a provider.
+- macOS 14 or later and Xcode with Swift 6.
+- fx, if you want the assistant. Install it with `curl -fsSL https://fx.sh/setup.sh | bash`, then run `fx` and type `/provider` to connect a provider.
 
 ## Build and run
 
 ```
 swift test              # unit tests
 scripts/bundle.sh       # builds build/webkit95.app
-scripts/run.sh          # runs it with temp favorites and downloads
+scripts/run.sh          # runs it with temporary favorites and downloads folders
 ```
 
-`WEBKIT95_AGENT_MODEL` picks the fx model. Free gateway models can log prompts, so keep private pages out of the chat while one is selected. `WEBKIT95_AGENT_COMMAND` runs another ACP agent, and the tests use a fake one.
+`open build/webkit95.app` launches it with your real favorites and `~/Downloads`.
+
+`WEBKIT95_AGENT_MODEL` sets the fx model. Free gateway models can log prompts, so avoid private pages while you use one. `WEBKIT95_AGENT_COMMAND` runs a different ACP agent instead of fx. The tests use it to run a fake agent.
 
 ## Tests
 
 ```
 swift test                                                   # 55 app and 87 agent tests
 WEBKIT95_REAL_AGENT=1 swift test --filter RealFxTests        # needs fx and a provider
-scripts/smoke.sh                                             # end to end, app stays in the background
+scripts/smoke.sh                                             # end to end, the app stays in the background
 scripts/device-qa.sh                                         # real clicks and keys, waits until you are idle
 ```
 
-`scripts/smoke.sh` drives the app through a token protected loopback socket that only exists in debug builds when `WEBKIT95_CONTROL=1` is set. See [docs/control.md](docs/control.md).
+`scripts/smoke.sh` drives the app through a loopback socket protected by a per launch token. The socket exists only in debug builds started with `WEBKIT95_CONTROL=1`. See [docs/control.md](docs/control.md).
 
-## Safety notes
+## Safety
 
-- fx runs with a private HOME so it cannot read your other agents' skill folders, see [docs/agent-notes.md](docs/agent-notes.md).
+- fx runs with a private HOME. Otherwise it scans `~/.claude/skills` and similar folders and, by its own report, adds a catalog of their names and descriptions to each request. See [docs/agent-notes.md](docs/agent-notes.md).
 - Release builds (`WEBKIT95_RELEASE=1 scripts/bundle.sh`) have no control socket and no Web Inspector.
 
-## Fonts
+## Font
 
-Ark Pixel 12px, SIL Open Font License 1.1, see `Resources/Fonts/OFL-ArkPixel.txt`.
+The Ark Pixel 12px font is used under the SIL Open Font License 1.1. The license is in `Resources/Fonts/OFL-ArkPixel.txt`.

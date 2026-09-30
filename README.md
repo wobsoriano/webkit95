@@ -1,6 +1,6 @@
 # webkit95
 
-A macOS browser on `WKWebView`, written in Swift and dressed as Windows 95 era Internet Explorer 3 and 4, with an opencode style assistant in the left Explorer Bar powered by [fx](https://fx.sh) over ACP. It is an homage and not affiliated with Microsoft. All icons and art are original.
+A macOS browser on `WKWebView`, written in Swift and dressed as Windows 95 era Internet Explorer 3 and 4, with an AI assistant in the left Explorer Bar that runs [fx](https://fx.sh) over the Agent Client Protocol (ACP). It is an homage and not affiliated with Microsoft. All icons and art are original.
 
 Status, decisions and next steps are in [docs/STATUS.md](docs/STATUS.md).
 

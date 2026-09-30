@@ -7,6 +7,7 @@ public enum Command: Hashable, Sendable {
     case toggleToolbar, toggleAddressBar, toggleStatusBar, toggleAssistant
     case textSize(TextSize), textLarger, textSmaller, textReset
     case stop, refresh, viewSource
+    case declutter, undoDeclutter, toggleAutoDeclutter
     case back, forward, home, search, focusAddress
     case addFavorite, openFavorite(String), removeFavorite(String)
     case about
@@ -35,6 +36,9 @@ public enum Command: Hashable, Sendable {
         case .stop: "view.stop"
         case .refresh: "view.refresh"
         case .viewSource: "view.source"
+        case .declutter: "view.declutter"
+        case .undoDeclutter: "view.undoDeclutter"
+        case .toggleAutoDeclutter: "view.autoDeclutter"
         case .back: "go.back"
         case .forward: "go.forward"
         case .home: "go.home"
@@ -60,6 +64,7 @@ public enum Command: Hashable, Sendable {
         .newWindow, .print, .close, .cut, .copy, .paste, .selectAll, .find,
         .toggleToolbar, .toggleAddressBar, .toggleStatusBar, .toggleAssistant,
         .textLarger, .textSmaller, .textReset, .stop, .refresh, .viewSource,
+        .declutter, .undoDeclutter, .toggleAutoDeclutter,
         .back, .forward, .home, .search, .focusAddress, .addFavorite, .about,
     ] + TextSize.allCases.map { .textSize($0) }
 }
@@ -246,6 +251,10 @@ public enum MenuModel {
             item("Sto&p", .stop, enabled: s.isLoading),
             item("&Refresh", .refresh, enabled: page),
             .separator,
+            item("&Declutter Page", .declutter, enabled: page && !s.declutter.isRunning),
+            item("&Undo Declutter", .undoDeclutter, enabled: s.declutter == .applied),
+            item("Auto Declutter This &Site", .toggleAutoDeclutter, enabled: DeclutterEligibility.check(s.url) == nil, check: checked(s.autoDeclutter)),
+            .separator,
             item("Sour&ce", .viewSource, enabled: page),
         ])
         let go = Menu(label: MenuLabel("&Go"), entries: [
@@ -283,6 +292,7 @@ public enum MenuModel {
         .toggleAssistant: Shortcut(.character("a"), [.command, .shift]),
         .stop: Shortcut(.escape),
         .refresh: .cmd("r"),
+        .declutter: Shortcut(.character("d"), [.command, .shift]),
         .viewSource: Shortcut(.character("u"), [.command, .option]),
         .back: .cmd("["),
         .forward: .cmd("]"),

@@ -5,7 +5,11 @@
 # Test pages come from scripts/testserver.py on loopback; favorites, history and downloads live in
 # a temp dir; the assistant runs the fake fx style ACP agent from the agent library's tests, never a
 # real agent.
-# Usage: scripts/smoke.sh   (SMOKE_SKIP_BUILD=1 reuses build/webkit95.app)
+# Declutter runs against scripts/fakejev.py, never the real TypeSafe API, and the app never sees
+# the real key: every launch drops TYPESAFE_API_KEY and JEV_KEY, the declutter launches give it a
+# fake one, and their empty ZDOTDIR keeps the login shell profile out.
+# Usage: scripts/smoke.sh   (SMOKE_SKIP_BUILD=1 reuses build/webkit95.app, SMOKE_ONLY=declutter
+# runs only the declutter checks)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CTL_PORT=9396; WEB_PORT=8796; AUTH_PORT=8797
@@ -35,6 +39,7 @@ cleanup() {
   for _ in $(seq 1 20); do pgrep -f "$ROOT/build/webkit95.app/Contents/MacOS/webkit95" >/dev/null || break; sleep 0.25; done
   pkill -9 -f "$ROOT/build/webkit95.app/Contents/MacOS/webkit95" 2>/dev/null
   { kill "$SERVER" "$AUTH_SERVER" && wait "$SERVER" "$AUTH_SERVER"; } 2>/dev/null
+  [ -n "${JEV_SERVER:-}" ] && { kill "$JEV_SERVER" && wait "$JEV_SERVER"; } 2>/dev/null
   rm -rf "$SCRATCH"
 }
 
@@ -54,6 +59,7 @@ trap cleanup EXIT
 # variables; an empty command means the app resolves fx itself.
 launch_app() {
   ( if [ -n "$1" ]; then export WEBKIT95_AGENT_COMMAND="$1"; else unset WEBKIT95_AGENT_COMMAND; fi
+    unset TYPESAFE_API_KEY JEV_KEY WEBKIT95_JEV_URL WEBKIT95_JEV_TIMEOUT
     for kv in ${2:-}; do export "$kv"; done
     WEBKIT95_CONTROL=1 WEBKIT95_CONTROL_PORT="$CTL_PORT" WEBKIT95_CONTROL_TOKEN_FILE="$TOKEN_FILE" WEBKIT95_BACKGROUND=1 \
       WEBKIT95_SUPPORT_DIR="$SUPPORT" WEBKIT95_DOWNLOAD_DIR="$DOWNLOADS" WEBKIT95_LOG="$LOG" \
@@ -69,6 +75,12 @@ quit_app() {
   done
   [ "$gone" = 1 ] && ok "$1" || bad "$1" "$(pgrep -fl "webkit95.app|fake_agent" | head -3)"
 }
+if [ "${SMOKE_ONLY:-}" = declutter ]; then
+  . "$ROOT/scripts/smoke-declutter.sh"
+  echo "$PASS passed, $FAIL failed"
+  [ "$FAIL" = 0 ]
+  exit
+fi
 TRACE="$SCRATCH/agent-trace.txt"
 launch_app "python3 $FAKE_AGENT --trace $TRACE"
 
@@ -338,6 +350,8 @@ if [ -z "$(timeout 10 zsh -lic 'command -v fx' 2>/dev/null)" ] && ! ls /opt/home
 else
   echo "skip  fx not found message (fx is installed here, and the smoke never runs a real agent)"
 fi
+
+. "$ROOT/scripts/smoke-declutter.sh"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

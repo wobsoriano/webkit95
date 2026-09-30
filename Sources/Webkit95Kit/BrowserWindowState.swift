@@ -64,6 +64,19 @@ public struct FindState: Equatable, Sendable {
     public init() {}
 }
 
+/// Where the page's declutter stands. A new page starts idle again.
+public enum DeclutterPhase: Equatable, Sendable {
+    case idle
+    case running(progress: Double)
+    /// Something is hidden and Undo Declutter can bring it back.
+    case applied
+
+    public var isRunning: Bool {
+        if case .running = self { return true }
+        return false
+    }
+}
+
 /// Everything one browser window shows, as a value. The window controller keeps it and redraws
 /// from it; WebKit callbacks only ever write into it.
 public struct BrowserWindowState: Equatable, Sendable {
@@ -86,6 +99,9 @@ public struct BrowserWindowState: Equatable, Sendable {
     /// Kept while the Find dialog is closed so reopening it shows the last query.
     public var find = FindState()
     public var findOpen = false
+    public var declutter: DeclutterPhase = .idle
+    /// Auto Declutter is on for this page's host.
+    public var autoDeclutter = false
 
     public init() {}
 

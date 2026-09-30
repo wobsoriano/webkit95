@@ -368,6 +368,12 @@ enum ControlServer {
             "downloads": app.downloads.summary,
             "favorites": app.favorites.items.map { ["title": $0.title, "url": $0.url] },
             "history": app.history.entries,
+            "declutter": [
+                "apiCalls": app.declutter.apiCalls,
+                "consented": app.declutter.hasConsent,
+                "sites": app.declutter.sites.hosts,
+                "templates": app.declutter.cache.entries.count,
+            ] as [String: Any],
         ]
     }
 
@@ -406,9 +412,11 @@ enum ControlServer {
                     info["buttons"] = ["session", "once", "reject"].filter { p.buttonView($0) != nil }
                 }
                 if let dl = d as? DownloadDialog { info["received"] = dl.received }
+                if let message = d.message { info["message"] = message }
                 return info
             },
             "frame": NSStringFromRect(c.window.frame),
+            "declutter": declutterState(c),
             "find": ["open": s.findOpen, "query": s.find.query, "found": s.find.lastFound.map { $0 as Any } ?? NSNull()],
         ]
         if let e = c.explorerView {
@@ -431,6 +439,34 @@ enum ControlServer {
             ] as [String: Any]
         }
         return out
+    }
+
+    private static func declutterState(_ c: BrowserWindowController) -> [String: Any] {
+        let phase = switch c.state.declutter {
+        case .idle: "idle"
+        case .running: "running"
+        case .applied: "applied"
+        }
+        let r = c.declutter.report
+        var last: [String: Any] = [
+            "candidates": r.candidates.map { ["id": $0.id, "selector": $0.selector.raw, "tag": $0.tag, "position": $0.position, "signals": String($0.signals.prefix(80))] },
+            "fromCache": r.fromCache,
+            "status": r.status,
+            "rules": r.rules.map { ["selector": $0.selector.raw, "choice": $0.choice.rawValue] },
+        ]
+        if let result = r.result {
+            last["requestBytes"] = result.requestBytes
+            last["responseBytes"] = result.responseBytes
+            last["latencyMs"] = Int(result.latency.components.seconds * 1000 + result.latency.components.attoseconds / 1_000_000_000_000_000)
+            last["model"] = result.response.model ?? NSNull()
+            last["inputTokens"] = result.response.usage?.inputTokens ?? NSNull()
+            last["outputTokens"] = result.response.usage?.outputTokens ?? NSNull()
+            last["ignoredIDs"] = result.response.ignoredIDs.count
+            last["decisions"] = result.response.decisions.map { d -> [String: Any] in
+                ["id": d.candidateID, "choice": d.choice.rawValue, "probability": d.probability ?? NSNull(), "confidence": d.confidence ?? NSNull()]
+            }
+        }
+        return ["phase": phase, "auto": c.state.autoDeclutter, "last": last]
     }
 
     private static func messageState(_ m: ChatMessage) -> [String: Any] {

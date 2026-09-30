@@ -33,6 +33,40 @@ by its own report, adds a roughly 21 KB catalog of their names and descriptions 
 That leaked private skill names to the model provider, so do not remove the isolation. The cost is
 that assistant sessions do not appear in a terminal's `fx sessions`.
 
+## Declutter (done 2026-09-30)
+
+View > Declutter Page (Cmd+Shift+D), Undo Declutter and Auto Declutter This Site. TypeSafe's Jev
+(`POST https://api.typesafe.ai/v1/systemone`, `jev-latest`, key from `TYPESAFE_API_KEY` or `JEV_KEY`
+in the environment or, once per launch, the login shell) labels up to 60 bounded element
+descriptions; no URL, title, article text, form values, cookies or raw HTML are sent. Elements are
+hidden only for ad, promotion, newsletter, social or cookie with probability and confidence both at
+least 0.9, after protections and a hide guard, through a random attribute, an owned style element
+and reversible inline overrides in their own content world. Decisions are cached per template
+(origin, policy version, page kind, route family, shell marker), zero rule results included. Full
+write up, data sent and limits: docs/declutter.md. Credits: THIRD_PARTY_NOTICES.md (kitze/unclutter,
+MIT).
+
+- Unit: 77 declutter tests in Tests/Webkit95KitTests/DeclutterTests.swift (selector grammar,
+  protections, candidates, request body, the strict response parser with duplicate id detection and
+  fuzzing, guard, template keys, cache, sites, messages, endpoint, key, client over a fake
+  transport) and 2 login shell variable probe tests.
+- Smoke: scripts/smoke-declutter.sh against scripts/fakejev.py (consent and Cancel, apply,
+  protected elements visible, exact DOM after Undo, idempotent re-runs, cache hit on a second
+  article with zero calls, Auto on reload, password, payment and start page skips, 401, 429,
+  timeout, malformed, oversized, redirect, unknown and duplicate ids, cookie wall with scroll lock,
+  missing key, and that recorded request bodies hold no URL, title, article text, form value,
+  cookie or HTML).
+- Real: 10 Jev calls on 5 synthetic and 3 public pages (allrecipes, BBC technology, Wikipedia), no
+  protected element or main text lost, 0.22 to 0.65 s per call, about 71,000 input tokens in all
+  (about 0.003 USD). The table is in docs/declutter.md. Two fixes came out of it (overlay text in the
+  text guard, "cookie" false positives).
+- Open risks: hiding is cosmetic (requests still load); late loaded clutter is not rechecked; no
+  re-analyze command, so a redesign keeps a stale template until the policy version changes; any
+  password input in the DOM, even a hidden login modal, skips the page; short element text does
+  leave the machine (redaction covers URLs, emails and long numbers only); Jev's labels on real
+  sites include judgment calls (a recipe rating bar hidden as social); main frame only; the release
+  build path was not run end to end (the endpoint rule is unit tested).
+
 ## Layout
 
 - `Sources/Webkit95Kit`: pure logic, no AppKit. URL input, favorites and typed address stores,
@@ -50,10 +84,10 @@ that assistant sessions do not appear in a terminal's `fx sessions`.
 
 ## How it is verified
 
-- `swift test`: 55 Webkit95Kit tests and 87 agent library tests pass at the last run (3 real fx
+- `swift test`: 132 Webkit95Kit tests and 89 agent library tests pass at the last run (3 real fx
   tests are skipped unless `WEBKIT95_REAL_AGENT=1`; with it they pass against fx 0.0.12 on the
   free gateway model).
-- `scripts/smoke.sh`: 98 checks pass against the real app driven through the control socket (2 more
+- `scripts/smoke.sh`: 165 checks pass (98 plus 67 for Declutter) against the real app driven through the control socket (2 more
   are skipped, the opt-in camera check and the fx-not-found check that needs fx to be absent), with
   the app in the background and never activated. It covers navigation, history, the address list,
   menus, the Win95 context menu, popups with `window.opener`, `postMessage` and `window.close()`,
@@ -108,15 +142,12 @@ that assistant sessions do not appear in a terminal's `fx sessions`.
 
 ## Next
 
-1. A built in declutter feature that uses TypeSafe's Jev model (`POST https://api.typesafe.ai/v1/systemone`,
-   model `jev-latest`, key from `TYPESAFE_API_KEY`) in the style of kitze/unclutter. Element candidates
-   only (no URL, title, article text or form values), hide decisions at confidence 0.9 or higher,
-   reversible CSS, a per site template cache, opt in per site. This hides clutter after load. It does
-   not stop ad or tracker requests.
-2. A real network level ad blocker later, for example filter lists converted to WebKit content rules
+1. A real network level ad blocker later, for example filter lists converted to WebKit content rules
    (AdGuard's SafariConverterLib is the first candidate to evaluate).
-3. Verify the allow paths against the real fx (Allow once, Allow for this session) and a real reply
+2. Verify the allow paths against the real fx (Allow once, Allow for this session) and a real reply
    after the workspace move.
-4. Verify the camera and microphone box with someone at the machine (`SMOKE_MEDIA=1 scripts/smoke.sh`).
+3. Verify the camera and microphone box with someone at the machine (`SMOKE_MEDIA=1 scripts/smoke.sh`).
+4. Declutter follow ups: recheck late loaded clutter (a bounded mutation observer as in Unclutter),
+   a re-analyze command for a stale template, and a per rule keep visible choice.
 5. Group fx's own message chunks by `messageId` if a reliable rule appears, and consider a Claude
    or other ACP agent profile if wanted.

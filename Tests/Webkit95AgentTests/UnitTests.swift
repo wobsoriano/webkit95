@@ -289,6 +289,28 @@ private func detail(of string: String) -> String? {
         #expect(kill(pid, 0) != 0, "the profile's background sleep survived the probe")
     }
 
+    @Test func variableProbeReadsTheFirstSetNameFromTheProfile() throws {
+        let home = try home { _ in
+            """
+            echo 'noise from FILE'
+            export WEBKIT95_TEST_ONLY_VAR=dummy-value-123
+
+            """
+        }
+        defer { try? FileManager.default.removeItem(at: home) }
+        let path = home.path(percentEncoded: false)
+        let environment = ["HOME": path, "ZDOTDIR": path]
+        #expect(
+            LoginShellVariable.probe(["WEBKIT95_TEST_ONLY_NOPE", "WEBKIT95_TEST_ONLY_VAR"], environment: environment)
+                == "dummy-value-123")
+        #expect(LoginShellVariable.probe(["WEBKIT95_TEST_ONLY_NOPE"], environment: environment) == nil)
+    }
+
+    @Test(arguments: [[], ["lower"], ["1ABC"], ["A-B"], ["A B"], ["A}"], ["A:-$(touch x)"], ["OK", "$HOME"], ["É"]])
+    func variableProbeRefusesInvalidNames(names: [String]) {
+        #expect(LoginShellVariable.probe(names, environment: ["HOME": "/nonexistent", "ZDOTDIR": "/nonexistent"]) == nil)
+    }
+
     @Test func markersUseTheLastBegin() {
         #expect(LoginShell.between("B junk E B/usr/binE trailing", begin: "B", end: "E") == "/usr/bin")
         #expect(LoginShell.between("B/usr/bin", begin: "B", end: "E") == nil)

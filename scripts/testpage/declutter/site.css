@@ -1,0 +1,22 @@
+body { margin: 0; font: 15px/1.5 Georgia, serif; color: #222; background: #fff; }
+.site-header { background: #1d3557; color: #fff; padding: 8px 16px; }
+.site-header a { color: #fff; margin-right: 14px; }
+.site-header .logo { font: bold 20px Arial, sans-serif; margin-right: 24px; }
+.layout { display: flex; gap: 20px; padding: 12px 16px; }
+main { flex: 1; min-width: 0; }
+article h1 { font: bold 26px Arial, sans-serif; margin: 4px 0 8px; }
+.byline { color: #666; font-size: 13px; }
+.sidebar { width: 220px; flex: none; }
+.ad-slot { background: #ffe066; border: 1px dashed #b8860b; padding: 10px; margin: 12px 0; font: 13px Arial, sans-serif; height: 60px; }
+.sponsored-box { background: #ffd6a5; padding: 10px; font: 13px Arial, sans-serif; height: 120px; }
+.promo-box { background: #caffbf; border: 2px solid #2b9348; padding: 10px; margin: 12px 0; font: 14px Arial, sans-serif; }
+.share-bar { background: #e0e7ff; padding: 6px 10px; margin: 10px 0; font: 13px Arial, sans-serif; }
+.share-bar a { margin-right: 10px; }
+.cookie-consent { position: fixed; left: 0; right: 0; bottom: 0; background: #333; color: #fff; padding: 12px 16px; font: 13px Arial, sans-serif; }
+.newsletter-popup { position: fixed; top: 90px; right: 30px; width: 260px; background: #fff; border: 3px solid #e63946; padding: 12px; font: 13px Arial, sans-serif; box-shadow: 4px 4px 0 #999; }
+.signin-box { border: 1px solid #999; padding: 8px 10px; margin-top: 16px; font: 13px Arial, sans-serif; }
+.comments { margin-top: 20px; border-top: 1px solid #ccc; }
+.comments textarea { width: 100%; height: 50px; }
+footer { color: #666; font-size: 12px; padding: 12px 16px; border-top: 1px solid #ccc; }
+.cookie-wall { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.75); display: flex; align-items: center; justify-content: center; }
+.cookie-wall .cookie-dialog { background: #fff; padding: 20px; width: 380px; font: 14px Arial, sans-serif; }

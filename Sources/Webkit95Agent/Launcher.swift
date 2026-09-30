@@ -116,6 +116,14 @@ enum LoginShell {
     /// The PATH an interactive login zsh ends up with, so both .zprofile and .zshrc edits apply.
     /// nil when the shell fails, hangs past `timeout`, or never prints the markers.
     static func probePath(environment overrides: [String: String] = [:], timeout: Duration = timeout) -> String? {
+        probe(expression: "\"$PATH\"", environment: overrides, timeout: timeout)
+    }
+
+    /// What `expression`, a zsh word, expands to in an interactive login zsh. nil when the shell
+    /// fails, hangs past `timeout`, never prints the markers, or the expansion is empty.
+    static func probe(expression: String, environment overrides: [String: String] = [:], timeout: Duration = timeout)
+        -> String?
+    {
         let nonce = "\(getpid())_\(UInt64.random(in: 0...UInt64.max))"
         // The markers carry a nonce so nothing a profile prints can pass for the answer.
         let begin = "__WEBKIT95_PATH_BEGIN_\(nonce)__"
@@ -124,7 +132,7 @@ enum LoginShell {
         environment.merge(overrides) { _, override in override }
         guard
             let spawned = try? spawnInOwnGroup(
-                path: "/bin/zsh", argv: ["/bin/zsh", "-lic", "printf '%s%s%s' '\(begin)' \"$PATH\" '\(end)'"],
+                path: "/bin/zsh", argv: ["/bin/zsh", "-lic", "printf '%s%s%s' '\(begin)' \(expression) '\(end)'"],
                 environment: environment, cwd: nil, pipeStdin: false, pipeStderr: false)
         else { return nil }
         let deadline = ContinuousClock.now + timeout
@@ -158,5 +166,24 @@ enum LoginShell {
             let stop = text.range(of: end, range: start.upperBound..<text.endIndex)
         else { return nil }
         return String(text[start.upperBound..<stop.lowerBound])
+    }
+}
+
+/// Reads environment variables a person set in their shell profile, for an app launched from the
+/// Dock that never ran that profile.
+public enum LoginShellVariable {
+    /// The value of the first of `names` that the login shell has set and non empty. nil when none
+    /// is, when `names` is empty, or when any name is not an uppercase shell identifier.
+    public static func probe(_ names: [String], environment: [String: String] = [:], timeout: Duration = .seconds(4))
+        -> String?
+    {
+        guard !names.isEmpty, names.allSatisfy(isName) else { return nil }
+        let expansion = names.reversed().reduce("") { inner, name in "${\(name):-\(inner)}" }
+        return LoginShell.probe(expression: "\"\(expansion)\"", environment: environment, timeout: timeout)
+    }
+
+    private static func isName(_ name: String) -> Bool {
+        guard let first = name.unicodeScalars.first, first == "_" || ("A"..."Z").contains(first) else { return false }
+        return name.unicodeScalars.allSatisfy { $0 == "_" || ("A"..."Z").contains($0) || ("0"..."9").contains($0) }
     }
 }

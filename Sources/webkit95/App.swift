@@ -17,6 +17,7 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var historyFile: JSONFile<AddressHistory> { JSONFile(supportDir.appendingPathComponent("typed-addresses.json")) }
     private var hitsFile: JSONFile<Int> { JSONFile(supportDir.appendingPathComponent("hits.json")) }
     let downloads = Downloads()
+    private(set) lazy var declutter = DeclutterService(supportDir: supportDir)
 
     /// ~/Downloads, or WEBKIT95_DOWNLOAD_DIR in debug builds so tests never touch the real one.
     var downloadDirectory: URL {

@@ -20,7 +20,14 @@ if pgrep -f "$ROOT/build/webkit95.app/Contents/MacOS/webkit95" >/dev/null; then 
 [ -n "${SHOTS_SKIP_BUILD:-}" ] || timeout 900 "$ROOT/scripts/bundle.sh" > "$ROOT/build/shots-build.log" 2>&1 || { echo "build failed"; exit 1; }
 python3 "$ROOT/scripts/testserver.py" "$WEB_PORT" >/dev/null 2>&1 &
 SERVER=$!
-trap 'ctl quit >/dev/null 2>&1; sleep 1; pkill -9 -f "$ROOT/build/webkit95.app/Contents/MacOS/webkit95" 2>/dev/null; kill $SERVER 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+# Declutter talks to the fake Jev with a fake key; the empty ZDOTDIR keeps the real key's profile out.
+JEV_URL="http://127.0.0.1:8800"
+mkdir -p "$SCRATCH/zdot"
+python3 "$ROOT/scripts/fakejev.py" 8800 "$SCRATCH/jev.jsonl" shots-fake-key >/dev/null 2>&1 &
+JEV_SERVER=$!
+trap 'ctl quit >/dev/null 2>&1; sleep 1; pkill -9 -f "$ROOT/build/webkit95.app/Contents/MacOS/webkit95" 2>/dev/null; kill $SERVER $JEV_SERVER 2>/dev/null; rm -rf "$SCRATCH"' EXIT
+unset JEV_KEY
+WEBKIT95_JEV_URL="$JEV_URL/v1/systemone" WEBKIT95_JEV_TIMEOUT=40 TYPESAFE_API_KEY=shots-fake-key ZDOTDIR="$SCRATCH/zdot" \
 WEBKIT95_CONTROL=1 WEBKIT95_BACKGROUND=1 WEBKIT95_SUPPORT_DIR="$SCRATCH/support" WEBKIT95_DOWNLOAD_DIR="$SCRATCH/downloads" \
   WEBKIT95_AGENT_COMMAND="python3 $ROOT/Tests/Webkit95AgentTests/Resources/fake_agent.py" \
   WEBKIT95_LOG="$ROOT/build/shots.log" timeout 900 "$ROOT/scripts/run.sh" &
@@ -102,3 +109,23 @@ if want source; then
   SHOT_TITLE=Notepad shot source notepad-front
 fi
 if want gallery; then ctl gallery >/dev/null; SHOT_TITLE=gallery shot gallery gallery; fi
+if want declutter; then
+  ARTICLE="$BASE/declutter/news/2026/09/30/city-council-approves-new-park.html"
+  ctl navigate "$ARTICLE" >/dev/null; wait_for 'not w[0]["loading"]' 10; sleep 0.5
+  shot declutter-before
+  ctl menu-open 2 >/dev/null; shot declutter-menu; ctl menu-close >/dev/null
+  ctl press view.declutter >/dev/null; wait_for 'any(d["kind"]=="declutter-consent" for d in w[0]["dialogs"])' 5
+  shot declutter-consent
+  ctl dialog declutter-consent ok >/dev/null; wait_for 'w[0]["declutter"]["phase"]=="applied"' 10; sleep 0.3
+  shot declutter-after
+  curl -s -X POST --data 401 "$JEV_URL/__mode" >/dev/null
+  ctl navigate "$BASE/declutter/deals/weekend-roundup.html" >/dev/null; wait_for 'not w[0]["loading"]' 10
+  ctl press view.declutter >/dev/null; wait_for 'any(d["kind"]=="declutter-error" for d in w[0]["dialogs"])' 10
+  shot declutter-error; ctl dialog declutter-error ok >/dev/null
+  curl -s -X POST --data slow "$JEV_URL/__mode" >/dev/null
+  ctl navigate "$BASE/declutter/blog/2026/quiet-morning-walk.html" >/dev/null; wait_for 'not w[0]["loading"]' 10
+  ctl press view.declutter >/dev/null; wait_for 'w[0]["declutter"]["phase"]=="running"' 5
+  SHOT_IDLE=1 shot declutter-running 0.3
+  wait_for 'w[0]["declutter"]["phase"]!="running"' 40
+  curl -s -X POST --data ok "$JEV_URL/__mode" >/dev/null
+fi

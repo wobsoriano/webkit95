@@ -69,6 +69,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     private(set) var explorerView: ExplorerBarView?
     private(set) var assistant: AssistantSession?
     private var typedNavigation = false
+    private(set) lazy var declutter = DeclutterRunner(controller: self)
 
     init(configuration: WKWebViewConfiguration, features: WKWindowFeatures?) {
         var size = NSSize(width: 900, height: 680)
@@ -166,11 +167,13 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     private func urlChanged(_ url: URL?) {
         guard let url else { return }
         state.url = url
+        state.autoDeclutter = App.shared.declutter.sites.contains(url.host)
     }
 
     private func loadingChanged(_ loading: Bool) {
         state.isLoading = loading
         if loading {
+            declutter.pageStarted()
             statusNote = nil
             hoverURL = ""
             if let url = webView.url { state.status = BrowserWindowState.openingStatus(url) }
@@ -210,8 +213,13 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         renderStatusText()
         let status = layoutView.statusBar
         status.zone = s.zone
-        status.showsProgress = s.isLoading
-        status.progress.fraction = s.progress
+        if case let .running(progress) = s.declutter, !s.isLoading {
+            status.showsProgress = true
+            status.progress.fraction = progress
+        } else {
+            status.showsProgress = s.isLoading
+            status.progress.fraction = s.progress
+        }
         layoutView.showsStatusBar = s.statusBarVisible
         layoutView.explorerWidth = CGFloat(s.assistantWidth)
         if s.assistantOpen != (layoutView.explorer != nil) {
@@ -220,7 +228,8 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         if old?.textSize != s.textSize { webView.pageZoom = s.textSize.pageZoom }
         if old == nil || old?.canGoBack != s.canGoBack || old?.canGoForward != s.canGoForward || old?.isLoading != s.isLoading
             || old?.url != s.url || old?.toolbarVisible != s.toolbarVisible || old?.statusBarVisible != s.statusBarVisible
-            || old?.addressBarVisible != s.addressBarVisible || old?.assistantOpen != s.assistantOpen || old?.textSize != s.textSize {
+            || old?.addressBarVisible != s.addressBarVisible || old?.assistantOpen != s.assistantOpen || old?.textSize != s.textSize
+            || old?.declutter != s.declutter || old?.autoDeclutter != s.autoDeclutter {
             menusChanged()
         }
         layoutView.needsLayout = true
@@ -315,6 +324,9 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
             state.status = BrowserWindowState.doneStatus
         case .refresh: webView.reload()
         case .viewSource: viewSource()
+        case .declutter: declutter.run(.manual)
+        case .undoDeclutter: declutter.undo()
+        case .toggleAutoDeclutter: declutter.toggleAuto()
         case .back: webView.goBack()
         case .forward: webView.goForward()
         case .home: load(Pages.homeURL)
@@ -383,6 +395,7 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         typedNavigation = false
         state.status = BrowserWindowState.doneStatus
+        declutter.pageFinished()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -486,9 +499,17 @@ final class BrowserWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         layoutView.statusBar.text = hoverURL.isEmpty ? (statusNote ?? state.status) : BrowserWindowState.shortcutStatus(hoverURL)
     }
 
-    func downloadStatus(_ text: String) {
+    func showStatusNote(_ text: String) {
         statusNote = text
         renderStatusText()
+    }
+
+    func setDeclutter(_ phase: DeclutterPhase) {
+        state.declutter = phase
+    }
+
+    func setAutoDeclutter(_ on: Bool) {
+        state.autoDeclutter = on
     }
 
     // MARK: scripts

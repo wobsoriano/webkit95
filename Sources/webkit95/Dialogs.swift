@@ -72,6 +72,8 @@ class DialogView: FaceView, NSTextFieldDelegate {
     private var contentSize: NSSize
     /// Escape, the close box and Cancel all call this.
     var onCancel: (() -> Void)?
+    /// A message box's text, for the control socket.
+    var message: String?
 
     init(kind: String, title: String, modal: Bool = true, size: NSSize) {
         self.kind = kind
@@ -294,6 +296,7 @@ extension DialogView {
         let width = max(12 + iconSpace + textWidth + 12, buttonsWidth + 24)
         let height = 12 + textHeight + 14 + 23 + 10
         let d = DialogView(kind: kind, title: title, size: NSSize(width: width, height: height))
+        d.message = message
         if let icon {
             let iv = IconView(icon: icon)
             iv.frame = NSRect(x: 12, y: 12, width: 32, height: 32)

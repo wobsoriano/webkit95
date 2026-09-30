@@ -64,7 +64,7 @@ final class Downloads: NSObject, WKDownloadDelegate {
         item.state = "done"
         if let url = item.destination { markQuarantined(url, from: download.originalRequest?.url) }
         finish(item)
-        item.owner?.downloadStatus("Download complete: \(item.destination?.lastPathComponent ?? "")")
+        item.owner?.showStatusNote("Download complete: \(item.destination?.lastPathComponent ?? "")")
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {

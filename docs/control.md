@@ -28,7 +28,7 @@ acts on the key window, or the last window.
 
 | Command | Effect |
 | --- | --- |
-| `state` | Windows (title, url, loading, status, zone, dialogs with a permission box's buttons, open menu, find, chat with restartVisible), Notepad windows, downloads, favorites, typed addresses, whether the app is active. |
+| `state` | Windows (title, url, loading, status, zone, dialogs with a permission box's buttons and a message box's text, open menu, find, chat with restartVisible, declutter with its phase, Auto flag and last run: candidates, rules, decisions, sizes, latency, tokens), Notepad windows, downloads, favorites, typed addresses, declutter (API call count, consent, Auto hosts, saved templates), whether the app is active. |
 | `navigate <text>` | Types `<text>` into the address bar and presses Return. |
 | `press <command id>` | Runs a menu command by id, for example `go.back`, `view.textSize.largest`, `favorites.open <url>`. Ids are in `Command.id` in `Sources/Webkit95Kit/MenuModel.swift`. Disabled commands answer with an error. |
 | `js <code>` | Evaluates JavaScript in the page and returns `{"result": ...}`. |

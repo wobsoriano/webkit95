@@ -18,14 +18,20 @@ public struct DeclutterPolicy: Equatable, Sendable {
     public var maxMatches: Int
     public var minProbability: Double
     public var minConfidence: Double
+    /// One rule whose in flow element covers more of the window than this is skipped on its own.
+    public var maxElementFraction: Double
+    /// An ad labeled element with at most this much text is an empty or reserved ad slot, and may
+    /// be hidden however large it is.
+    public var slotTextLength: Int
+    /// All hidden in flow elements together (the union of their areas) may not cover more than this.
     public var maxViewportFraction: Double
     public var maxTextFraction: Double
     public var maxResponseBytes: Int
     public var cacheLimit: Int
 
     public init(version: Int, maxCandidates: Int, tagLimit: Int, signalsLimit: Int, textLimit: Int, positionLimit: Int,
-                maxMatches: Int, minProbability: Double, minConfidence: Double, maxViewportFraction: Double,
-                maxTextFraction: Double, maxResponseBytes: Int, cacheLimit: Int) {
+                maxMatches: Int, minProbability: Double, minConfidence: Double, maxElementFraction: Double, slotTextLength: Int,
+                maxViewportFraction: Double, maxTextFraction: Double, maxResponseBytes: Int, cacheLimit: Int) {
         self.version = version
         self.maxCandidates = maxCandidates
         self.tagLimit = tagLimit
@@ -35,6 +41,8 @@ public struct DeclutterPolicy: Equatable, Sendable {
         self.maxMatches = maxMatches
         self.minProbability = minProbability
         self.minConfidence = minConfidence
+        self.maxElementFraction = maxElementFraction
+        self.slotTextLength = slotTextLength
         self.maxViewportFraction = maxViewportFraction
         self.maxTextFraction = maxTextFraction
         self.maxResponseBytes = maxResponseBytes
@@ -43,8 +51,8 @@ public struct DeclutterPolicy: Equatable, Sendable {
 
     public static let standard = DeclutterPolicy(
         version: 1, maxCandidates: 60, tagLimit: 30, signalsLimit: 300, textLimit: 450, positionLimit: 30,
-        maxMatches: 20, minProbability: 0.9, minConfidence: 0.9, maxViewportFraction: 0.5,
-        maxTextFraction: 0.35, maxResponseBytes: 1_000_000, cacheLimit: 500)
+        maxMatches: 20, minProbability: 0.9, minConfidence: 0.9, maxElementFraction: 0.4, slotTextLength: 50,
+        maxViewportFraction: 0.5, maxTextFraction: 0.35, maxResponseBytes: 1_000_000, cacheLimit: 500)
 }
 
 /// Jev's seven labels. Only the five clutter labels ever hide anything.
@@ -780,17 +788,73 @@ public struct HideRule: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+/// A rectangle in viewport CSS pixels, already clipped to the viewport.
+public struct ViewportRect: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    /// Zero for anything non finite or inside out, so a page reporting absurd sizes cannot
+    /// overflow or produce NaN.
+    public var sane: ViewportRect? {
+        guard x.isFinite, y.isFinite, width.isFinite, height.isFinite, width > 0, height > 0 else { return nil }
+        return self
+    }
+
+    public var area: Double { sane.map { $0.width * $0.height } ?? 0 }
+
+    /// The area covered by at least one rectangle: a sweep over the distinct x edges, and inside
+    /// each slab the merged y intervals of the rectangles spanning it.
+    public static func unionArea(_ rects: [ViewportRect]) -> Double {
+        let rects = rects.compactMap(\.sane)
+        let edges = Set(rects.flatMap { [$0.x, $0.x + $0.width] }).sorted()
+        var total = 0.0
+        for (left, right) in zip(edges, edges.dropFirst()) {
+            let spans = rects.filter { $0.x <= left && $0.x + $0.width >= right }
+                .map { ($0.y, $0.y + $0.height) }.sorted { $0.0 < $1.0 }
+            var covered = 0.0
+            var open: (Double, Double)?
+            for (top, bottom) in spans {
+                if let current = open, top <= current.1 {
+                    open = (current.0, max(current.1, bottom))
+                } else {
+                    covered += open.map { $0.1 - $0.0 } ?? 0
+                    open = (top, bottom)
+                }
+            }
+            covered += open.map { $0.1 - $0.0 } ?? 0
+            total += covered * (right - left)
+        }
+        return total
+    }
+}
+
 /// The live DOM, measured for a set of rules just before hiding.
 public struct ElementMeasure: Codable, Equatable, Sendable {
     public var facts: ElementFacts
-    /// CSS pixels of the element inside the viewport.
-    public var visibleArea: Double
+    /// Its place among every measured element, in rule then document order.
+    public var index: Int
+    /// The `index` of the nearest measured ancestor, when one of the other measured elements
+    /// contains this one, so nested matches are not counted twice.
+    public var within: Int?
+    /// The part of the element inside the viewport.
+    public var frame: ViewportRect
     /// Not fixed or sticky; hiding it removes page area rather than an overlay.
     public var inFlow: Bool
 
-    public init(facts: ElementFacts, visibleArea: Double, inFlow: Bool) {
+    public init(facts: ElementFacts, index: Int, within: Int? = nil, frame: ViewportRect, inFlow: Bool) {
         self.facts = facts
-        self.visibleArea = visibleArea
+        self.index = index
+        self.within = within
+        self.frame = frame
         self.inFlow = inFlow
     }
 }
@@ -823,43 +887,179 @@ public enum GuardViolation: Equatable, Sendable {
 }
 
 public enum HidePlan: Equatable, Sendable {
-    case hide([StableSelector])
-    case nothing
+    /// The selectors to hide, and how many rules were skipped as too large.
+    case hide([StableSelector], skipped: Int)
+    case nothing(skipped: Int)
     case refuse(GuardViolation)
+}
+
+/// What the guard decided about one rule.
+public struct RuleVerdict: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case hide
+        case noMatch
+        case tooManyMatches(Int)
+        case protected(ProtectionReason)
+        /// One in flow element alone covers more than `maxElementFraction` of the window.
+        case tooLarge(fraction: Double)
+    }
+
+    public let rule: HideRule
+    public let kind: Kind
+
+    public init(rule: HideRule, kind: Kind) {
+        self.rule = rule
+        self.kind = kind
+    }
+}
+
+/// The guard's whole reasoning for one run: a verdict per rule, the fractions the backstop saw,
+/// and the plan. The debug table is printed from this.
+public struct GuardReview: Equatable, Sendable {
+    public var verdicts: [RuleVerdict]
+    /// The union of the hidden in flow elements' areas over the viewport's.
+    public var areaFraction: Double
+    /// The hidden in flow elements' text (descendants of hidden elements not counted again) over the page's.
+    public var textFraction: Double
+    public var plan: HidePlan
+
+    public init(verdicts: [RuleVerdict], areaFraction: Double, textFraction: Double, plan: HidePlan) {
+        self.verdicts = verdicts
+        self.areaFraction = areaFraction
+        self.textFraction = textFraction
+        self.plan = plan
+    }
 }
 
 /// The last check before hiding.
 public enum HideGuard {
-    /// Drops rules whose selector matches nothing, more than `maxMatches` elements, or any
-    /// protected element. Then, if the survivors would hide more than `maxViewportFraction` of the
-    /// viewport or more than `maxTextFraction` of the page's text, hides nothing at all. Both
-    /// count in flow elements only: a fixed or sticky overlay covers the content rather than being
-    /// it (a cookie wall's text can outweigh a short article), and protections still apply to it.
     public static func plan(_ rules: [HideRule], measure: PageMeasure, policy: DeclutterPolicy = .standard) -> HidePlan {
+        review(rules, measure: measure, policy: policy).plan
+    }
+
+    /// Each rule is judged on its own: dropped when its selector matches nothing, more than
+    /// `maxMatches` elements or any protected element, and skipped when one of its in flow
+    /// elements alone covers more than `maxElementFraction` of the window, unless the rule is an
+    /// ad and the element holds no more than `slotTextLength` characters (an empty or reserved
+    /// ad slot, which Jev is told to label ad, is not content however large its box is). A fixed
+    /// or sticky element is an overlay that covers the content rather than being it, so it is
+    /// exempt from both area limits; the protections still apply to it.
+    ///
+    /// Then the backstop: if the rules that hide would together cover more than
+    /// `maxViewportFraction` of the window (the union of their in flow areas, so a wrapper and
+    /// the slot inside it count once) or more than `maxTextFraction` of the page's text (an
+    /// element inside another hidden element is not counted again), nothing is hidden at all.
+    public static func review(_ rules: [HideRule], measure: PageMeasure, policy: DeclutterPolicy = .standard) -> GuardReview {
         var seen = Set<StableSelector>()
-        var survivors: [(StableSelector, [ElementMeasure])] = []
+        var verdicts: [RuleVerdict] = []
+        var hidden: [ElementMeasure] = []
         for rule in rules where seen.insert(rule.selector).inserted {
-            guard let elements = measure.rules.first(where: { $0.selector == rule.selector.raw })?.elements,
-                !elements.isEmpty, elements.count <= policy.maxMatches,
-                !elements.contains(where: { Protection.reason($0.facts) != nil })
-            else { continue }
-            survivors.append((rule.selector, elements))
+            let kind = verdict(rule, measure: measure, policy: policy)
+            verdicts.append(RuleVerdict(rule: rule, kind: kind))
+            if kind == .hide, let elements = measure.elements(for: rule.selector) { hidden += elements }
         }
-        guard !survivors.isEmpty else { return .nothing }
-        let elements = survivors.flatMap(\.1)
-        // Sums in Double: a page reporting absurd sizes must not overflow or produce NaN.
-        let area = elements.filter(\.inFlow).reduce(0.0) { $0 + positive($1.visibleArea) }
+        let skipped = verdicts.filter { if case .tooLarge = $0.kind { true } else { false } }.count
+        let flow = hidden.filter(\.inFlow)
         let viewport = positive(measure.viewportArea)
-        let areaFraction = viewport > 0 ? area / viewport : 0
-        let text = elements.filter(\.inFlow).reduce(0.0) { $0 + positive(Double($1.facts.textLength)) }
+        let areaFraction = viewport > 0 ? ViewportRect.unionArea(flow.map(\.frame)) / viewport : 0
+        let hiddenIndices = Set(hidden.map(\.index))
+        let ancestors = Dictionary(measure.rules.flatMap(\.elements).map { ($0.index, $0.within) }, uniquingKeysWith: { first, _ in first })
+        let text = flow.filter { !hasAncestor($0, in: hiddenIndices, ancestors) }
+            .reduce(0.0) { $0 + positive(Double($1.facts.textLength)) }
         let textFraction = text / Double(max(measure.textLength, 1))
-        if areaFraction > policy.maxViewportFraction { return .refuse(.viewportArea(fraction: areaFraction)) }
-        if textFraction > policy.maxTextFraction { return .refuse(.pageText(fraction: textFraction)) }
-        return .hide(survivors.map(\.0))
+        let plan: HidePlan = if hidden.isEmpty {
+            .nothing(skipped: skipped)
+        } else if areaFraction > policy.maxViewportFraction {
+            .refuse(.viewportArea(fraction: areaFraction))
+        } else if textFraction > policy.maxTextFraction {
+            .refuse(.pageText(fraction: textFraction))
+        } else {
+            .hide(verdicts.filter { $0.kind == .hide }.map(\.rule.selector), skipped: skipped)
+        }
+        return GuardReview(verdicts: verdicts, areaFraction: areaFraction, textFraction: textFraction, plan: plan)
+    }
+
+    /// The share of the window one element covers, 0 when it is an overlay.
+    public static func fraction(_ element: ElementMeasure, in measure: PageMeasure) -> Double {
+        let viewport = positive(measure.viewportArea)
+        return element.inFlow && viewport > 0 ? element.frame.area / viewport : 0
+    }
+
+    private static func verdict(_ rule: HideRule, measure: PageMeasure, policy: DeclutterPolicy) -> RuleVerdict.Kind {
+        guard let elements = measure.elements(for: rule.selector), !elements.isEmpty else { return .noMatch }
+        if elements.count > policy.maxMatches { return .tooManyMatches(elements.count) }
+        if let reason = elements.lazy.compactMap({ Protection.reason($0.facts) }).first { return .protected(reason) }
+        let oversized = elements.map { fraction($0, in: measure) }.enumerated().filter { index, share in
+            let emptySlot = rule.choice == .ad && elements[index].facts.textLength <= policy.slotTextLength
+            return share > policy.maxElementFraction && !emptySlot
+        }
+        if let largest = oversized.map(\.element).max() { return .tooLarge(fraction: largest) }
+        return .hide
+    }
+
+    private static func hasAncestor(_ element: ElementMeasure, in hidden: Set<Int>, _ ancestors: [Int: Int?]) -> Bool {
+        var next = element.within
+        var steps = 0
+        while let index = next, steps < 10_000 {
+            if hidden.contains(index) { return true }
+            next = ancestors[index] ?? nil
+            steps += 1
+        }
+        return false
     }
 
     private static func positive(_ value: Double) -> Double {
         value.isFinite && value > 0 ? value : 0
+    }
+}
+
+extension PageMeasure {
+    public func elements(for selector: StableSelector) -> [ElementMeasure]? {
+        rules.first(where: { $0.selector == selector.raw })?.elements
+    }
+}
+
+/// One line per rule for the log and the control socket, debug builds only. Never page text:
+/// the selector (a tag and one class token, id or test id), the label, the verdict, and per
+/// element its position kind, share of the window and text length.
+public enum DeclutterDebugTable {
+    public static func lines(_ review: GuardReview, measure: PageMeasure, decisions: [String: Decision] = [:]) -> [String] {
+        review.verdicts.map { verdict in
+            let rule = verdict.rule
+            let elements = (measure.elements(for: rule.selector) ?? []).map { element in
+                let position = element.inFlow ? "flow" : "overlay"
+                let protection = Protection.reason(element.facts).map { " \($0.rawValue)" } ?? ""
+                return "\(position) \(percent(HideGuard.fraction(element, in: measure))) t\(element.facts.textLength)"
+                    + (element.within.map { " in#\($0)" } ?? "") + protection
+            }
+            let numbers = decisions[rule.selector.raw].map { d in
+                " p\(d.probability.map { String(format: "%.2f", $0) } ?? "?") c\(d.confidence.map { String(format: "%.2f", $0) } ?? "?")"
+            } ?? ""
+            return "\(rule.selector.raw) \(rule.choice.rawValue)\(numbers) -> \(describe(verdict.kind)) [\(elements.joined(separator: ", "))]"
+        } + ["union \(percent(review.areaFraction)) of the window, \(percent(review.textFraction)) of the text -> \(describe(review.plan))"]
+    }
+
+    public static func describe(_ kind: RuleVerdict.Kind) -> String {
+        switch kind {
+        case .hide: "hide"
+        case .noMatch: "no match"
+        case .tooManyMatches(let count): "too many matches (\(count))"
+        case .protected(let reason): "protected (\(reason.rawValue))"
+        case .tooLarge(let fraction): "skipped, too large (\(percent(fraction)))"
+        }
+    }
+
+    public static func describe(_ plan: HidePlan) -> String {
+        switch plan {
+        case .hide(let selectors, let skipped): "hide \(selectors.count) rule\(selectors.count == 1 ? "" : "s"), skipped \(skipped)"
+        case .nothing(let skipped): "nothing, skipped \(skipped)"
+        case .refuse(.viewportArea(let fraction)): "refused, \(percent(fraction)) of the window"
+        case .refuse(.pageText(let fraction)): "refused, \(percent(fraction)) of the text"
+        }
+    }
+
+    private static func percent(_ fraction: Double) -> String {
+        fraction.isFinite ? String(format: "%.1f%%", fraction * 100) : "inf%"
     }
 }
 
@@ -1132,8 +1332,9 @@ public enum DeclutterFailure: Error, Equatable, Sendable {
 
 /// What the status bar says after a run.
 public enum DeclutterOutcome: Equatable, Sendable {
-    case hid(count: Int, fromCache: Bool)
-    case nothing(fromCache: Bool)
+    /// `skipped` counts rules the guard set aside as too large.
+    case hid(count: Int, skipped: Int = 0, fromCache: Bool)
+    case nothing(skipped: Int = 0, fromCache: Bool)
     case skipped(SkipReason)
     case refused(GuardViolation)
     case undone
@@ -1141,10 +1342,10 @@ public enum DeclutterOutcome: Equatable, Sendable {
     public var status: String {
         let saved = " (saved template)"
         switch self {
-        case .hid(let count, let fromCache):
-            return "Decluttered: hid \(count) element\(count == 1 ? "" : "s")" + (fromCache ? saved : "")
-        case .nothing(let fromCache):
-            return "Nothing to hide" + (fromCache ? saved : "")
+        case .hid(let count, let skipped, let fromCache):
+            return "Decluttered: hid \(count) element\(count == 1 ? "" : "s")" + Self.skippedNote(skipped) + (fromCache ? saved : "")
+        case .nothing(let skipped, let fromCache):
+            return "Nothing to hide" + Self.skippedNote(skipped) + (fromCache ? saved : "")
         case .skipped(.internalPage): return "Declutter skipped: webkit95 pages are not decluttered"
         case .skipped(.notWeb): return "Declutter skipped: only http and https pages can be decluttered"
         case .skipped(.passwordField): return "Declutter skipped: this page has a password field"
@@ -1155,6 +1356,10 @@ public enum DeclutterOutcome: Equatable, Sendable {
             return "Declutter stopped: it would hide \(Self.percent(fraction))% of the page's text, so nothing was hidden"
         case .undone: return "Declutter undone"
         }
+    }
+
+    private static func skippedNote(_ skipped: Int) -> String {
+        skipped > 0 ? " (skipped \(skipped) too large)" : ""
     }
 
     /// Int(fraction * 100), clamped so a non finite or huge fraction cannot trap.

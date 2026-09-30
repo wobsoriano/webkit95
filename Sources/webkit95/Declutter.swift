@@ -65,11 +65,17 @@ final class DeclutterService {
     private let sitesFile: JSONFile<DeclutterSites>
     private let consentFile: JSONFile<DeclutterConsent>
 
+    /// WEBKIT95_DECLUTTER_DEBUG=1 in a debug build: each run logs the guard's table and keeps
+    /// the page measurement in the report for the control socket. Never page text.
+    let debugTable: Bool
+
     init(supportDir: URL, environment: [String: String] = ProcessInfo.processInfo.environment) {
         #if DEBUG
         let debug = true
+        debugTable = environment["WEBKIT95_DECLUTTER_DEBUG"] == "1"
         #else
         let debug = false
+        debugTable = false
         #endif
         self.environment = environment
         // A debug build pointed at a fake server takes the key from its own environment only, so
@@ -153,6 +159,9 @@ final class DeclutterRunner {
         var rules: [HideRule] = []
         var fromCache = false
         var result: JevResult?
+        var review: GuardReview?
+        /// Only with WEBKIT95_DECLUTTER_DEBUG=1.
+        var measure: PageMeasure?
         /// The status bar text the run ended with; the bar itself shows link hovers too.
         var status = ""
     }
@@ -282,16 +291,25 @@ final class DeclutterRunner {
             let measure = try JSONDecoder().decode(PageMeasure.self, from: try await DeclutterScript.call(
                 c.webView, "measure(selectors)", arguments: ["selectors": rules.map(\.selector.raw)]))
             guard current() else { return }
-            switch HideGuard.plan(rules, measure: measure, policy: policy) {
-            case .nothing:
-                finish(run, .nothing(fromCache: fromCache))
+            let review = HideGuard.review(rules, measure: measure, policy: policy)
+            report.review = review
+            if service.debugTable {
+                report.measure = measure
+                let byID = Dictionary((report.result?.response.decisions ?? []).map { ($0.candidateID, $0) }, uniquingKeysWith: { first, _ in first })
+                let bySelector = Dictionary(report.candidates.compactMap { c in byID[c.id].map { (c.selector.raw, $0) } }, uniquingKeysWith: { first, _ in first })
+                for line in DeclutterDebugTable.lines(review, measure: measure, decisions: bySelector) { log("declutter table: \(line)") }
+            }
+            switch review.plan {
+            case let .nothing(skipped):
+                finish(run, .nothing(skipped: skipped, fromCache: fromCache))
             case let .refuse(violation):
                 finish(run, .refused(violation))
-            case let .hide(selectors):
+            case let .hide(selectors, skipped):
                 let applied = try JSONDecoder().decode(Applied.self, from: try await DeclutterScript.call(
                     c.webView, "apply(selectors)", arguments: ["selectors": selectors.map(\.raw)]))
                 guard current() else { return }
-                finish(run, applied.hidden > 0 ? .hid(count: applied.hidden, fromCache: fromCache) : .nothing(fromCache: fromCache))
+                finish(run, applied.hidden > 0 ? .hid(count: applied.hidden, skipped: skipped, fromCache: fromCache)
+                    : .nothing(skipped: skipped, fromCache: fromCache))
             }
         } catch let failure as DeclutterFailure {
             guard current() else { return }

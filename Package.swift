@@ -13,6 +13,7 @@ let package = Package(
         .executableTarget(name: "webkit95", dependencies: ["Webkit95Kit", "Webkit95Agent"]),
         // Resources/fake_agent.py is found through #filePath, not the bundle.
         .testTarget(name: "Webkit95AgentTests", dependencies: ["Webkit95Agent"], exclude: ["Resources"]),
-        .testTarget(name: "Webkit95KitTests", dependencies: ["Webkit95Kit", "Webkit95Agent"]),
+        // Resources/declutter holds captured real page fixtures, read through #filePath.
+        .testTarget(name: "Webkit95KitTests", dependencies: ["Webkit95Kit", "Webkit95Agent"], exclude: ["Resources"]),
     ]
 )

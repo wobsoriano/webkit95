@@ -8,10 +8,16 @@ saw and hid, whether anything protected or main content disappeared, latency, re
 sizes and token usage, then undoes the hiding.
 
 Usage: DECLUTTER_REAL=1 python3 scripts/declutter-eval.py <out.jsonl> <url or /local/path> ...
-Local paths are served by scripts/testserver.py on 127.0.0.1."""
+Local paths are served by scripts/testserver.py on 127.0.0.1.
+DECLUTTER_SUPPORT_DIR keeps the support dir (and so the template cache) between runs, so a page
+seen before is re-measured and re-guarded with no call. DECLUTTER_SHOTS=<prefix> screenshots each
+page before and after (scripts/shot.sh, the window comes front without activating the app).
+WEBKIT95_DECLUTTER_DEBUG=1 passes through to the app and puts the guard's table and the page
+measurement in each row (see scripts/declutter-fixture.py)."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -72,6 +78,15 @@ def js(code):
     return json.loads(r) if isinstance(r, str) else r
 
 
+def shot(target, phase):
+    prefix = os.environ.get("DECLUTTER_SHOTS")
+    if not prefix:
+        return
+    slug = re.sub(r"[^a-z0-9]+", "-", target.lower()).strip("-")[:40]
+    env = dict(os.environ, WEBKIT95_CONTROL_PORT=PORT, WEBKIT95_CONTROL_TOKEN_FILE=TOKEN_FILE, SHOT_IDLE=os.environ.get("SHOT_IDLE", "3"))
+    subprocess.run([os.path.join(ROOT, "scripts", "shot.sh"), "%s-%s-%s" % (prefix, slug, phase)], env=env, timeout=400)
+
+
 def main():
     if os.environ.get("DECLUTTER_REAL") != "1":
         sys.exit("refusing: set DECLUTTER_REAL=1, each uncached page is a paid Jev call")
@@ -80,7 +95,8 @@ def main():
     server = subprocess.Popen([sys.executable, os.path.join(ROOT, "scripts", "testserver.py"), WEB_PORT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     env = {k: v for k, v in os.environ.items() if k not in ("TYPESAFE_API_KEY", "JEV_KEY", "WEBKIT95_JEV_URL", "WEBKIT95_JEV_TIMEOUT", "WEBKIT95_AGENT_COMMAND")}
     env.update(WEBKIT95_CONTROL="1", WEBKIT95_CONTROL_PORT=PORT, WEBKIT95_CONTROL_TOKEN_FILE=TOKEN_FILE, WEBKIT95_BACKGROUND="1",
-               WEBKIT95_SUPPORT_DIR=os.path.join(scratch, "support"), WEBKIT95_DOWNLOAD_DIR=os.path.join(scratch, "downloads"),
+               WEBKIT95_SUPPORT_DIR=os.environ.get("DECLUTTER_SUPPORT_DIR") or os.path.join(scratch, "support"),
+               WEBKIT95_DOWNLOAD_DIR=os.path.join(scratch, "downloads"),
                WEBKIT95_AGENT_COMMAND="python3 " + os.path.join(ROOT, "Tests", "Webkit95AgentTests", "Resources", "fake_agent.py"))
     log = open(os.path.join(ROOT, "build", "eval.log"), "w")
     app = subprocess.Popen([APP], env=env, stdout=log, stderr=log)
@@ -99,6 +115,7 @@ def main():
             time.sleep(3 if target.startswith("http") else 0.5)
             before = js(PROBE)
             calls_before = state()["declutter"]["apiCalls"]
+            shot(target, "before")
             ctl("press", "view.declutter")
             s = wait(lambda s: s["windows"][0]["dialogs"] or s["windows"][0]["declutter"]["phase"] != "running", 5)
             if any(d["kind"] == "declutter-consent" for d in s["windows"][0]["dialogs"]):
@@ -107,6 +124,7 @@ def main():
             s = wait(lambda s: s["windows"][0]["declutter"]["phase"] != "running" or s["windows"][0]["dialogs"], 40)
             w = s["windows"][0]
             after = js(PROBE)
+            shot(target, "after")
             lost = {k: before[k] - after[k] for k in before if k != "text" and after.get(k, 0) < before[k]} if before and after else {}
             row = {
                 "target": target, "title": w["title"], "status": w["declutter"]["last"]["status"] or w["status"],

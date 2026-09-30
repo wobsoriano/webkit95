@@ -466,6 +466,17 @@ enum ControlServer {
                 ["id": d.candidateID, "choice": d.choice.rawValue, "probability": d.probability ?? NSNull(), "confidence": d.confidence ?? NSNull()]
             }
         }
+        if let review = r.review {
+            last["verdicts"] = review.verdicts.map { ["selector": $0.rule.selector.raw, "verdict": DeclutterDebugTable.describe($0.kind)] }
+            last["areaFraction"] = review.areaFraction.isFinite ? review.areaFraction : -1
+            last["textFraction"] = review.textFraction.isFinite ? review.textFraction : -1
+            // The measurement (no page text) travels only with WEBKIT95_DECLUTTER_DEBUG=1.
+            if let measure = r.measure, let data = try? JSONEncoder().encode(measure),
+                let object = try? JSONSerialization.jsonObject(with: data) {
+                last["measure"] = object
+                last["table"] = DeclutterDebugTable.lines(review, measure: measure)
+            }
+        }
         return ["phase": phase, "auto": c.state.autoDeclutter, "last": last]
     }
 

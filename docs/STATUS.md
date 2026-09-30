@@ -46,26 +46,39 @@ and reversible inline overrides in their own content world. Decisions are cached
 write up, data sent and limits: docs/declutter.md. Credits: THIRD_PARTY_NOTICES.md (kitze/unclutter,
 MIT).
 
-- Unit: 77 declutter tests in Tests/Webkit95KitTests/DeclutterTests.swift (selector grammar,
+- Unit: 86 declutter tests in Tests/Webkit95KitTests/DeclutterTests.swift (selector grammar,
   protections, candidates, request body, the strict response parser with duplicate id detection and
-  fuzzing, guard, template keys, cache, sites, messages, endpoint, key, client over a fake
-  transport) and 2 login shell variable probe tests.
+  fuzzing, the guard with per rule verdicts, the union of frames, nested text, the backstop and the
+  debug table, template keys, cache, sites, messages, endpoint, key, client over a fake transport),
+  a replay of three captured real bbc.com runs (Tests/Webkit95KitTests/Resources/declutter) and 2
+  login shell variable probe tests.
 - Smoke: scripts/smoke-declutter.sh against scripts/fakejev.py (consent and Cancel, apply,
   protected elements visible, exact DOM after Undo, idempotent re-runs, cache hit on a second
   article with zero calls, Auto on reload, password, payment and start page skips, 401, 429,
   timeout, malformed, oversized, redirect, unknown and duplicate ids, cookie wall with scroll lock,
-  missing key, and that recorded request bodies hold no URL, title, article text, form value,
-  cookie or HTML).
+  an oversized mislabeled block skipped while the ads hide, two blocks over half the window together
+  still refused, a full viewport cookie backdrop released, missing key, and that recorded request
+  bodies hold no URL, title, article text, form value, cookie or HTML).
 - Real: 10 Jev calls on 5 synthetic and 3 public pages (allrecipes, BBC technology, Wikipedia), no
   protected element or main text lost, 0.22 to 0.65 s per call, about 71,000 input tokens in all
   (about 0.003 USD). The table is in docs/declutter.md. Two fixes came out of it (overlay text in the
-  text guard, "cookie" false positives).
+  text guard, "cookie" false positives). Then 3 more calls on 2026-09-30 for the bbc.com refusal below.
+- Fixed 2026-09-30: "Declutter stopped: it would hide 68% of the window" on bbc.com. The guard summed
+  every matched element, and the top billboard sits inside three nested ad wrappers, so one ad counted
+  three times (128 percent at 1100 by 800, 68 at the user's window). The guard now judges each rule on
+  its own (a block over 40 percent of the window is skipped with a reason, unless it is an ad labeled
+  box with almost no text, an empty slot; overlays are exempt), counts the union of the rest, and keeps
+  the half window and text backstops. The status bar says "Decluttered: hid 9 elements (skipped 1 too
+  large)". `WEBKIT95_DECLUTTER_DEBUG=1` (debug builds) logs the decision table. Details and the before
+  and after table in docs/declutter.md.
 - Open risks: hiding is cosmetic (requests still load); late loaded clutter is not rechecked; no
   re-analyze command, so a redesign keeps a stale template until the policy version changes; any
   password input in the DOM, even a hidden login modal, skips the page; short element text does
   leave the machine (redaction covers URLs, emails and long numbers only); Jev's labels on real
   sites include judgment calls (a recipe rating bar hidden as social); main frame only; the release
-  build path was not run end to end (the endpoint rule is unit tested).
+  build path was not run end to end (the endpoint rule is unit tested); the guard's fractions are
+  shares of the window, so one empty billboard in a short window (44 percent of 1088 by 652 on
+  bbc.com/news) can still push a page past the half window backstop.
 
 ## Layout
 
@@ -84,10 +97,10 @@ MIT).
 
 ## How it is verified
 
-- `swift test`: 132 Webkit95Kit tests and 89 agent library tests pass at the last run (3 real fx
+- `swift test`: 141 Webkit95Kit tests and 89 agent library tests pass at the last run (3 real fx
   tests are skipped unless `WEBKIT95_REAL_AGENT=1`; with it they pass against fx 0.0.12 on the
   free gateway model).
-- `scripts/smoke.sh`: 165 checks pass (98 plus 67 for Declutter) against the real app driven through the control socket (2 more
+- `scripts/smoke.sh`: 173 checks pass (98 plus 75 for Declutter) against the real app driven through the control socket (2 more
   are skipped, the opt-in camera check and the fx-not-found check that needs fx to be absent), with
   the app in the background and never activated. It covers navigation, history, the address list,
   menus, the Win95 context menu, popups with `window.opener`, `postMessage` and `window.close()`,

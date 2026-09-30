@@ -233,20 +233,33 @@ enum DeclutterScript {
       return { sensitive, signals, candidates };
     }
 
+    // Every matched element gets an index, and `within` names the nearest matched ancestor, so
+    // Swift can count a wrapper and the slot inside it once.
     function measure(selectors) {
       const ctx = pageContext();
       const vw = window.innerWidth, vh = window.innerHeight;
+      const found = selectors.map((selector) => ({ selector, elements: matches(selector).slice(0, 100) }));
+      const indexOf = new Map();
+      for (const rule of found) for (const el of rule.elements) if (!indexOf.has(el)) indexOf.set(el, indexOf.size);
+      const within = (el) => {
+        for (let n = el.parentElement; n; n = n.parentElement) if (indexOf.has(n)) return indexOf.get(n);
+        return null;
+      };
       return {
         viewportArea: vw * vh,
         textLength: ctx.bodyText,
-        rules: selectors.map((selector) => ({
+        rules: found.map(({ selector, elements }) => ({
           selector,
-          elements: matches(selector).slice(0, 100).map((el) => {
+          elements: elements.map((el) => {
             const r = el.getBoundingClientRect();
-            const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
-            const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+            const x = Math.max(r.left, 0), y = Math.max(r.top, 0);
+            const w = Math.max(0, Math.min(r.right, vw) - x);
+            const h = Math.max(0, Math.min(r.bottom, vh) - y);
             const position = getComputedStyle(el).position;
-            return { facts: facts(el, ctx), visibleArea: w * h, inFlow: position !== 'fixed' && position !== 'sticky' };
+            return {
+              facts: facts(el, ctx), index: indexOf.get(el), within: within(el),
+              frame: { x, y, width: w, height: h }, inFlow: position !== 'fixed' && position !== 'sticky',
+            };
           }),
         })),
       };

@@ -12,8 +12,9 @@ JEV_SERVER=$!
 for _ in $(seq 1 40); do curl -s "$JEV_URL/__count" >/dev/null && break; sleep 0.1; done
 jev_count() { curl -s "$JEV_URL/__count" | python3 -c 'import json,sys; print(json.load(sys.stdin)["count"])'; }
 jev_mode() { curl -s -X POST --data "$1" "$JEV_URL/__mode" >/dev/null; }
-# shown '<css>' prints True when the element is displayed.
+# shown '<css>' prints True when the element is displayed; visible '<css>' also sees through a hidden parent.
 shown() { js "(() => { const e = document.querySelector('$1'); return !!e && getComputedStyle(e).display !== 'none'; })()"; }
+visible() { js "(() => { const e = document.querySelector('$1'); return !!e && e.checkVisibility(); })()"; }
 open_page() { ctl navigate "$1" >/dev/null; wait_for 'w[0]["url"]=="'"$1"'" and not w[0]["loading"]' 10; }
 
 DECL_ENV="WEBKIT95_JEV_URL=$JEV_URL/v1/systemone WEBKIT95_JEV_TIMEOUT=2 ZDOTDIR=$ZDOT"
@@ -124,6 +125,30 @@ ctl press view.undoDeclutter >/dev/null
 wait_for 'w[0]["declutter"]["phase"]=="idle"' 5
 [ "$(js 'document.documentElement.outerHTML === window.__wk95Before && getComputedStyle(document.body).overflowY === "hidden"')" = True ] \
   && ok "Undo puts the wall and the scroll lock back exactly" || bad "Undo puts the wall and the scroll lock back exactly" "differs"
+
+# The bbc.com failure in miniature: a 45 percent hero mislabeled promotion, a 30 percent empty billboard
+# inside a wrapper (two ad rules, one box) and three sidebar ad slots.
+open_page "$BASE/declutter/harbor/oversized.html"
+ctl press view.declutter >/dev/null
+# The fake labels the sidebar ad from its slots' text, so the slots hide through their parent: two top level elements.
+check "an oversized mislabeled block is skipped on its own and the ads still hide" 'w[0]["declutter"]["phase"]=="applied" and w[0]["status"]=="Decluttered: hid 2 elements (skipped 1 too large)"' 10 'w[0]["status"], w[0]["declutter"]["last"].get("verdicts")'
+[ "$(visible ".promo-hero")" = True ] && [ "$(visible ".ad-billboard")" = False ] && [ "$(shown ".ad-wrapper-top")" = False ] && [ "$(visible ".ad-slot")" = False ] && [ "$(visible "article")" = True ] && [ "$(visible "nav")" = True ] \
+  && ok "the hero stays, the nested billboard counts once and hides, the article and navigation stay" || bad "the hero stays, the nested billboard counts once and hides, the article and navigation stay" "hero $(visible ".promo-hero") billboard $(visible ".ad-billboard") slot $(visible ".ad-slot") article $(visible "article")"
+[ "$(st '[v["verdict"] for v in w[0]["declutter"]["last"]["verdicts"] if v["selector"]=="section#autumn-sale-hero"][0].startswith("skipped, too large")')" = True ] \
+  && ok "the control socket names the skipped rule and its reason" || bad "the control socket names the skipped rule and its reason" "$(st 'w[0]["declutter"]["last"]["verdicts"]')"
+open_page "$BASE/declutter/ferry/too-much.html"
+ctl press view.declutter >/dev/null
+check "two blocks under the single element limit but over half the window together are still refused" 'w[0]["declutter"]["phase"]=="idle" and w[0]["status"].startswith("Declutter stopped: it would hide ") and "of the window" in w[0]["status"]' 10 'w[0]["status"]'
+[ "$(shown ".promo-band")" = True ] && ok "and nothing was hidden" || bad "and nothing was hidden" "promo band hidden"
+open_page "$BASE/declutter/tides/cookie-backdrop.html"
+js 'window.__wk95Before = document.documentElement.outerHTML; 1' >/dev/null
+ctl press view.declutter >/dev/null
+check "a full viewport cookie backdrop and its dialog are hidden together" 'w[0]["declutter"]["phase"]=="applied" and w[0]["status"]=="Decluttered: hid 2 elements"' 10 'w[0]["status"], w[0]["declutter"]["last"].get("verdicts")'
+[ "$(shown "#cookie-backdrop")" = False ] && [ "$(shown "#cookie-dialog")" = False ] && [ "$(js 'getComputedStyle(document.body).overflowY')" = auto ] && [ "$(shown "article")" = True ] \
+  && ok "the backdrop is an overlay, not window area: the scroll lock is released and the article stays" || bad "the backdrop is an overlay, not window area: the scroll lock is released and the article stays" "backdrop $(shown "#cookie-backdrop") overflow $(js 'getComputedStyle(document.body).overflowY')"
+ctl press view.undoDeclutter >/dev/null
+wait_for 'w[0]["declutter"]["phase"]=="idle"' 5
+[ "$(js 'document.documentElement.outerHTML === window.__wk95Before')" = True ] && ok "Undo restores the backdrop page exactly" || bad "Undo restores the backdrop page exactly" "differs"
 check "the app stayed in the background through the declutter checks" 's["active"]==False'
 
 python3 - "$JEV_RECORD" <<'PY' && ok "the fake Jev never received a URL, title, article text, form value, cookie or raw HTML, and always got the fake key" || bad "the fake Jev never received a URL, title, article text, form value, cookie or raw HTML, and always got the fake key" "see above"

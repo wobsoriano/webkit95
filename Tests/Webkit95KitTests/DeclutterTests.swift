@@ -449,82 +449,213 @@ private struct SeededRandom: RandomNumberGenerator {
 @Suite struct HideGuardTests {
     static let a = StableSelector("div.ad-slot")!
     static let b = StableSelector("div#cookie-banner")!
+    static let c = StableSelector("section.promo-hero")!
 
-    static func element(area: Double = 100, inFlow: Bool = true, text: Int = 10, facts change: (inout ElementFacts) -> Void = { _ in })
-        -> ElementMeasure
+    /// One element in a 1000 px² viewport: a strip `area` wide at `y`, so distinct rows never overlap.
+    static func element(area: Double = 100, y: Double = 0, inFlow: Bool = true, text: Int = 10, index: Int = 0, within: Int? = nil,
+                        facts change: (inout ElementFacts) -> Void = { _ in }) -> ElementMeasure
     {
-        ElementMeasure(facts: facts { $0.textLength = text; change(&$0) }, visibleArea: area, inFlow: inFlow)
+        ElementMeasure(facts: facts { $0.textLength = text; change(&$0) }, index: index, within: within,
+                       frame: ViewportRect(x: 0, y: y, width: area, height: 1), inFlow: inFlow)
     }
 
     static func page(_ rules: [RuleMeasure], viewport: Double = 1000, text: Int = 1000) -> PageMeasure {
         PageMeasure(viewportArea: viewport, textLength: text, rules: rules)
     }
 
+    static func verdict(_ review: GuardReview, _ selector: StableSelector) -> RuleVerdict.Kind? {
+        review.verdicts.first { $0.rule.selector == selector }?.kind
+    }
+
     @Test func nothingSurvives() {
         let rules = [HideRule(selector: Self.a, choice: .ad)]
-        #expect(HideGuard.plan([], measure: Self.page([])) == .nothing)
-        #expect(HideGuard.plan(rules, measure: Self.page([])) == .nothing)
-        #expect(HideGuard.plan(rules, measure: Self.page([RuleMeasure(selector: Self.a.raw, elements: [])])) == .nothing)
+        #expect(HideGuard.plan([], measure: Self.page([])) == .nothing(skipped: 0))
+        #expect(HideGuard.plan(rules, measure: Self.page([])) == .nothing(skipped: 0))
+        #expect(HideGuard.plan(rules, measure: Self.page([RuleMeasure(selector: Self.a.raw, elements: [])])) == .nothing(skipped: 0))
     }
 
     @Test func protectedRuleIsDropped() {
         let measure = Self.page([
-            RuleMeasure(selector: Self.a.raw, elements: [Self.element(), Self.element { $0.containsFocus = true }]),
-            RuleMeasure(selector: Self.b.raw, elements: [Self.element()]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(), Self.element(index: 1) { $0.containsFocus = true }]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(index: 2)]),
         ])
         let rules = [HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.b, choice: .cookie)]
-        #expect(HideGuard.plan(rules, measure: measure) == .hide([Self.b]))
+        let review = HideGuard.review(rules, measure: measure)
+        #expect(review.plan == .hide([Self.b], skipped: 0))
+        #expect(Self.verdict(review, Self.a) == .protected(.focus))
     }
 
     @Test func tooManyMatchesIsDropped() {
-        let measure = Self.page([RuleMeasure(selector: Self.a.raw, elements: Array(repeating: Self.element(area: 1, text: 0), count: 21))])
-        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: measure) == .nothing)
+        let measure = Self.page([RuleMeasure(selector: Self.a.raw, elements: (0..<21).map { Self.element(area: 1, y: Double($0), text: 0, index: $0) })])
+        let review = HideGuard.review([HideRule(selector: Self.a, choice: .ad)], measure: measure)
+        #expect(review.plan == .nothing(skipped: 0))
+        #expect(Self.verdict(review, Self.a) == .tooManyMatches(21))
     }
 
     @Test func refusesTooMuchWindowButNotForOverlays() {
         let rules = [HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.b, choice: .cookie)]
         let big = Self.page([
-            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 300), Self.element(area: 300)]),
-            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 900, inFlow: false)]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 300, text: 100), Self.element(area: 300, y: 1, text: 100, index: 1)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 900, inFlow: false, index: 2)]),
         ])
         #expect(HideGuard.plan(rules, measure: big) == .refuse(.viewportArea(fraction: 0.6)))
         let overlay = Self.page([
             RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 100)]),
-            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 900, inFlow: false)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 900, inFlow: false, index: 1)]),
         ])
-        #expect(HideGuard.plan(rules, measure: overlay) == .hide([Self.a, Self.b]))
+        #expect(HideGuard.plan(rules, measure: overlay) == .hide([Self.a, Self.b], skipped: 0))
     }
 
     @Test func refusesTooMuchText() {
-        let measure = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(text: 200), Self.element(text: 200)])])
+        let measure = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(text: 200), Self.element(y: 1, text: 200, index: 1)])])
         #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: measure) == .refuse(.pageText(fraction: 0.4)))
     }
 
     @Test func overlayTextDoesNotCountAgainstThePage() {
         let wall = Self.page([RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 1000, inFlow: false, text: 570)])])
-        #expect(HideGuard.plan([HideRule(selector: Self.b, choice: .cookie)], measure: wall) == .hide([Self.b]))
+        #expect(HideGuard.plan([HideRule(selector: Self.b, choice: .cookie)], measure: wall) == .hide([Self.b], skipped: 0))
         let protectedWall = Self.page([RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 1000, inFlow: false, text: 570) { $0.containsMain = true }])])
-        #expect(HideGuard.plan([HideRule(selector: Self.b, choice: .cookie)], measure: protectedWall) == .nothing)
+        #expect(HideGuard.plan([HideRule(selector: Self.b, choice: .cookie)], measure: protectedWall) == .nothing(skipped: 0))
     }
 
     @Test func passesDedupedInRuleOrder() {
         let measure = Self.page([
             RuleMeasure(selector: Self.a.raw, elements: [Self.element()]),
-            RuleMeasure(selector: Self.b.raw, elements: [Self.element()]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(index: 1)]),
         ], viewport: 0, text: 0)
         let rules = [HideRule(selector: Self.b, choice: .cookie), HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.b, choice: .ad)]
         #expect(HideGuard.plan(rules, measure: measure) == .refuse(.pageText(fraction: 20)))
         let quiet = Self.page([
             RuleMeasure(selector: Self.a.raw, elements: [Self.element(text: 0)]),
-            RuleMeasure(selector: Self.b.raw, elements: [Self.element(text: 0)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(text: 0, index: 1)]),
         ], viewport: 0, text: 0)
-        #expect(HideGuard.plan(rules, measure: quiet) == .hide([Self.b, Self.a]))
+        #expect(HideGuard.plan(rules, measure: quiet) == .hide([Self.b, Self.a], skipped: 0))
+    }
+
+    @Test func oversizedRuleIsSkippedWhileTheOthersApply() {
+        let measure = Self.page([
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 60, text: 13)]),
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 600, y: 1, text: 300, index: 1)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 50, y: 2, text: 40, index: 2)]),
+        ])
+        let rules = [HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.c, choice: .promotion), HideRule(selector: Self.b, choice: .newsletter)]
+        let review = HideGuard.review(rules, measure: measure)
+        #expect(review.plan == .hide([Self.a, Self.b], skipped: 1))
+        #expect(Self.verdict(review, Self.c) == .tooLarge(fraction: 0.6))
+        #expect(review.areaFraction == 0.11)
+        let allSkipped = HideGuard.plan([HideRule(selector: Self.c, choice: .promotion)], measure: measure)
+        #expect(allSkipped == .nothing(skipped: 1))
+    }
+
+    @Test func emptyAdSlotIsHiddenHoweverLargeButOnlyForAds() {
+        let slot = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 450, text: 13)])])
+        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: slot) == .hide([Self.a], skipped: 0))
+        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .promotion)], measure: slot) == .nothing(skipped: 1))
+        let wordy = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 450, text: 51)])])
+        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: wordy) == .nothing(skipped: 1))
+        let mixed = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 450, text: 13), Self.element(area: 10, y: 1, text: 200, index: 1)])])
+        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: mixed) == .hide([Self.a], skipped: 0))
+    }
+
+    @Test func overlaysAreExemptFromTheElementLimit() {
+        let measure = Self.page([
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 1000, inFlow: false, text: 400)]),
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 1000, inFlow: false, text: 400, index: 1)]),
+        ])
+        let rules = [HideRule(selector: Self.b, choice: .cookie), HideRule(selector: Self.c, choice: .promotion)]
+        #expect(HideGuard.plan(rules, measure: measure) == .hide([Self.b, Self.c], skipped: 0))
+    }
+
+    @Test func nestedAndOverlappingElementsCountOnce() {
+        // A billboard ad inside two wrappers: three rules, one 42 percent box.
+        let wrapper = StableSelector("div[data-testid=\"ad-unit\"]")!
+        let inner = StableSelector("div.dotcom-ad-inner")!
+        let nested = Self.page([
+            RuleMeasure(selector: wrapper.raw, elements: [Self.element(area: 420, text: 14, index: 0)]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 420, text: 14, index: 1, within: 0)]),
+            RuleMeasure(selector: inner.raw, elements: [Self.element(area: 410, text: 14, index: 2, within: 1)]),
+        ])
+        let rules = [HideRule(selector: wrapper, choice: .ad), HideRule(selector: Self.a, choice: .ad), HideRule(selector: inner, choice: .ad)]
+        let review = HideGuard.review(rules, measure: nested)
+        #expect(review.plan == .hide([wrapper, Self.a, inner], skipped: 0))
+        #expect(review.areaFraction == 0.42)
+        #expect(review.textFraction == 0.014)
+        let overlapping = Self.page([
+            RuleMeasure(selector: Self.a.raw, elements: [ElementMeasure(facts: facts(), index: 0, frame: ViewportRect(x: 0, y: 0, width: 10, height: 30), inFlow: true)]),
+            RuleMeasure(selector: Self.c.raw, elements: [ElementMeasure(facts: facts(), index: 1, frame: ViewportRect(x: 0, y: 20, width: 10, height: 30), inFlow: true)]),
+        ])
+        let overlap = HideGuard.review([HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.c, choice: .promotion)], measure: overlapping)
+        #expect(overlap.areaFraction == 0.5)
+        #expect(overlap.plan == .hide([Self.a, Self.c], skipped: 0))
+    }
+
+    @Test func nestedTextCountsOnceAndCountsAgainWhenTheAncestorIsSkipped() {
+        let hidden = Self.page([
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 100, text: 300, index: 0)]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 90, text: 300, index: 1, within: 0)]),
+        ])
+        let rules = [HideRule(selector: Self.c, choice: .promotion), HideRule(selector: Self.a, choice: .ad)]
+        let once = HideGuard.review(rules, measure: hidden)
+        #expect(once.textFraction == 0.3)
+        #expect(once.plan == .hide([Self.c, Self.a], skipped: 0))
+        let skipped = Self.page([
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 600, text: 300, index: 0)]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 90, text: 300, index: 1, within: 0)]),
+        ])
+        let again = HideGuard.review(rules, measure: skipped)
+        #expect(again.textFraction == 0.3)
+        #expect(again.plan == .hide([Self.a], skipped: 1))
+    }
+
+    @Test func theBackstopStillRefusesTheRemainder() {
+        let measure = Self.page([
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 600, text: 300, index: 0)]),
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 350, y: 1, text: 100, index: 1)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 350, y: 2, text: 100, index: 2)]),
+        ])
+        let rules = [HideRule(selector: Self.c, choice: .promotion), HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.b, choice: .newsletter)]
+        let review = HideGuard.review(rules, measure: measure)
+        #expect(review.plan == .refuse(.viewportArea(fraction: 0.7)))
+        #expect(Self.verdict(review, Self.c) == .tooLarge(fraction: 0.6))
+    }
+
+    @Test func unionArea() {
+        let r = { (x: Double, y: Double, w: Double, h: Double) in ViewportRect(x: x, y: y, width: w, height: h) }
+        #expect(ViewportRect.unionArea([]) == 0)
+        #expect(ViewportRect.unionArea([r(0, 0, 10, 10)]) == 100)
+        #expect(ViewportRect.unionArea([r(0, 0, 10, 10), r(2, 2, 5, 5)]) == 100)
+        #expect(ViewportRect.unionArea([r(0, 0, 10, 10), r(5, 5, 10, 10)]) == 175)
+        #expect(ViewportRect.unionArea([r(0, 0, 10, 10), r(20, 0, 10, 10)]) == 200)
+        #expect(ViewportRect.unionArea([r(0, 0, 10, 10), r(0, 0, 10, 10), r(0, 0, 10, 10)]) == 100)
+        #expect(ViewportRect.unionArea([r(0, 0, 0, 10), r(0, 0, 10, -1), r(.nan, 0, 10, 10), r(0, 0, .infinity, 10)]) == 0)
+        #expect(ViewportRect.unionArea([r(0, 0, 4, 4), r(1, 1, 1, 6), r(3, 3, 3, 1)]) == 16 + 3 + 2)
+    }
+
+    @Test func debugTableNamesVerdictsWithoutPageText() {
+        let measure = Self.page([
+            RuleMeasure(selector: Self.a.raw, elements: [Self.element(area: 420, text: 14)]),
+            RuleMeasure(selector: Self.c.raw, elements: [Self.element(area: 600, y: 1, text: 300, index: 1, within: 0)]),
+            RuleMeasure(selector: Self.b.raw, elements: [Self.element(area: 1000, inFlow: false, text: 200, index: 2)]),
+        ])
+        let rules = [HideRule(selector: Self.a, choice: .ad), HideRule(selector: Self.c, choice: .promotion), HideRule(selector: Self.b, choice: .cookie)]
+        let review = HideGuard.review(rules, measure: measure)
+        let decisions = [Self.a.raw: Decision(candidateID: "c1", choice: .ad, probability: 0.97, confidence: 0.91)]
+        let lines = DeclutterDebugTable.lines(review, measure: measure, decisions: decisions)
+        #expect(lines == [
+            "div.ad-slot ad p0.97 c0.91 -> hide [flow 42.0% t14]",
+            "section.promo-hero promotion -> skipped, too large (60.0%) [flow 60.0% t300 in#0]",
+            "div#cookie-banner cookie -> hide [overlay 0.0% t200]",
+            "union 42.0% of the window, 1.4% of the text -> hide 2 rules, skipped 1",
+        ])
     }
 
     @Test func absurdMeasuresDoNotTrap() {
+        let odd = [ViewportRect(x: 0, y: 0, width: .nan, height: 1), ViewportRect(x: .infinity, y: 0, width: 1, height: 1),
+                   ViewportRect(x: 0, y: 0, width: .infinity, height: .infinity), ViewportRect(x: 0, y: 0, width: -5, height: 1)]
         let measure = Self.page([
-            RuleMeasure(selector: Self.a.raw, elements: Array(repeating: Self.element(area: .nan, text: 2000), count: 10)
-                + Array(repeating: Self.element(area: .infinity, text: 2000), count: 10)),
+            RuleMeasure(selector: Self.a.raw, elements: (0..<20).map {
+                ElementMeasure(facts: facts { $0.textLength = 2000 }, index: $0, frame: odd[$0 % odd.count], inFlow: true)
+            }),
         ], viewport: .infinity, text: .min)
         guard case .refuse(.pageText(let fraction)) = HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: measure) else {
             Issue.record("expected a text refusal")
@@ -532,6 +663,69 @@ private struct SeededRandom: RandomNumberGenerator {
         }
         #expect(fraction.isFinite)
         #expect(DeclutterOutcome.refused(.pageText(fraction: .infinity)).status.contains("100%"))
+        let loop = Self.page([RuleMeasure(selector: Self.a.raw, elements: [Self.element(text: 0, index: 0, within: 1), Self.element(y: 1, text: 0, index: 1, within: 0)])])
+        #expect(HideGuard.plan([HideRule(selector: Self.a, choice: .ad)], measure: loop) == .hide([Self.a], skipped: 0))
+    }
+}
+
+/// Real pages, captured by scripts/declutter-fixture.py from real Jev runs, replayed through the
+/// parser, the rules and the guard. Each fixture's `expected` block says what the guard must do.
+@Suite struct ReplayTests {
+    static let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Resources/declutter")
+
+    static func fixtures() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasSuffix(".json") }.sorted()
+    }
+
+    @Test(arguments: try fixtures()) func replay(name: String) throws {
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: Self.directory.appendingPathComponent(name))) as? [String: Any])
+        let candidates = try #require(root["candidates"] as? [[String: Any]]).map { raw in
+            Candidate(id: raw["id"] as! String, selector: StableSelector(raw["selector"] as! String)!, tag: raw["tag"] as! String,
+                      signals: raw["signals"] as! String, text: "", position: raw["position"] as! String, count: raw["count"] as! Int)
+        }
+        let answers = try JSONSerialization.data(withJSONObject: ["model": "jev-1.13.0", "answers": root["answers"]!])
+        let response = try JevResponse.parse(answers, asked: Set(candidates.map(\.id)))
+        #expect(response.ignoredIDs.isEmpty)
+        let rules = HideRule.from(response.decisions, candidates: candidates)
+        let measure = try JSONDecoder().decode(PageMeasure.self, from: JSONSerialization.data(withJSONObject: root["measure"]!))
+        let review = HideGuard.review(rules, measure: measure)
+        let expected = try #require(root["expected"] as? [String: Any])
+        let comment = Comment(rawValue: "\(name): \(DeclutterDebugTable.lines(review, measure: measure).joined(separator: "\n"))")
+
+        var hidden: [StableSelector] = []
+        var skipped = 0
+        switch review.plan {
+        case let .hide(selectors, count):
+            hidden = selectors
+            skipped = count
+            #expect(expected["plan"] as? String == "hide", comment)
+        case let .nothing(count):
+            skipped = count
+            #expect(expected["plan"] as? String == "nothing", comment)
+        case .refuse:
+            #expect(expected["plan"] as? String == "refuse", comment)
+        }
+        #expect(skipped == expected["skipped"] as? Int ?? 0, comment)
+        for selector in expected["hidden"] as? [String] ?? [] { #expect(hidden.map(\.raw).contains(selector), comment) }
+        for selector in expected["visible"] as? [String] ?? [] { #expect(!hidden.map(\.raw).contains(selector), comment) }
+        #expect(review.areaFraction <= DeclutterPolicy.standard.maxViewportFraction, comment)
+
+        // The hard requirement: nothing protected and no main content is ever hidden.
+        for selector in hidden {
+            for element in measure.elements(for: selector) ?? [] {
+                #expect(Protection.reason(element.facts) == nil, comment)
+                #expect(!element.facts.isRoot && !element.facts.containsMain && !element.facts.isNavigation, comment)
+                #expect(!element.facts.containsLargestTextBlock || element.facts.isCookieNotice, comment)
+            }
+        }
+
+        // The old guard summed every matched element's area: the fixture says whether that sum
+        // would have refused this page, which is the bug this suite guards against.
+        let survivors = review.verdicts.filter { $0.kind == .hide }.flatMap { measure.elements(for: $0.rule.selector) ?? [] }
+        let naive = survivors.filter(\.inFlow).reduce(0.0) { $0 + $1.frame.area } / measure.viewportArea
+        if expected["naiveRefusal"] as? Bool == true {
+            #expect(naive > DeclutterPolicy.standard.maxViewportFraction, "\(name): naive sum \(naive)")
+        }
     }
 }
 
@@ -769,8 +963,11 @@ private struct SeededRandom: RandomNumberGenerator {
         (.hid(count: 3, fromCache: false), "Decluttered: hid 3 elements"),
         (.hid(count: 1, fromCache: true), "Decluttered: hid 1 element (saved template)"),
         (.hid(count: 2, fromCache: true), "Decluttered: hid 2 elements (saved template)"),
+        (.hid(count: 9, skipped: 2, fromCache: false), "Decluttered: hid 9 elements (skipped 2 too large)"),
+        (.hid(count: 1, skipped: 1, fromCache: true), "Decluttered: hid 1 element (skipped 1 too large) (saved template)"),
         (.nothing(fromCache: false), "Nothing to hide"),
         (.nothing(fromCache: true), "Nothing to hide (saved template)"),
+        (.nothing(skipped: 1, fromCache: false), "Nothing to hide (skipped 1 too large)"),
         (.skipped(.internalPage), "Declutter skipped: webkit95 pages are not decluttered"),
         (.skipped(.notWeb), "Declutter skipped: only http and https pages can be decluttered"),
         (.skipped(.passwordField), "Declutter skipped: this page has a password field"),

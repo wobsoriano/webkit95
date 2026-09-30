@@ -98,18 +98,46 @@ shortens the 20 second request timeout for tests. Release builds ignore both and
 6. The model's output is only ever a label on an id webkit95 chose. It never picks a selector and
    nothing it says is executed, so page text that tries to steer the model can at most change a
    label on one of the proposed elements.
-7. Before hiding, the extractor measures every element each rule matches on the live page. A rule
-   is dropped if it matches nothing, more than 20 elements, or any protected element. If the rest
-   would hide more than half of the window (counting only elements in the page flow, since a fixed
-   overlay covers content rather than being content) or more than 35 percent of the page's text,
-   nothing is hidden and the status bar says so.
-8. Hiding marks each element with a random `data-webkit95-declutter-*` attribute, adds one owned
+7. Before hiding, the extractor measures every element each rule matches on the live page (its
+   frame inside the window, its position, its facts, and which other matched element contains it).
+   The guard then judges each rule on its own: a rule is dropped if it matches nothing, more than
+   20 elements, or any protected element, and skipped as too large if one of its in flow elements
+   alone covers more than 40 percent of the window. An ad labeled element with at most 50
+   characters of text is exempt from that limit: an empty or reserved ad slot is not content
+   however big its box is (bbc.com's top billboard is 42 percent of a 1088 by 652 window). Fixed
+   and sticky elements are overlays that cover the content rather than being it, so they are
+   exempt too, whatever their label; the protections still apply to them.
+8. Then the backstop on the rules that remain: if together they would hide more than half of the
+   window, counting the union of their in flow frames so that a wrapper and the slot inside it
+   count once, or more than 35 percent of the page's text (an element inside another hidden
+   element is not counted again), nothing is hidden and the status bar says so. Otherwise the
+   status bar reports what happened, for example "Decluttered: hid 9 elements (skipped 1 too
+   large)".
+9. Hiding marks each element with a random `data-webkit95-declutter-*` attribute, adds one owned
    style element, and sets `display: none !important` inline. When the hidden elements include a
    cookie wall or another fixed overlay and no other visible dialog (a login box) is open, the
    `overflow: hidden` scroll lock on `html` and `body` is released the same way.
-9. Undo removes the attribute and the style element and puts back each touched element's style
-   attribute exactly as it was (or removes it if there was none). Every run starts with that undo,
-   so running Declutter twice on a page gives the same result as running it once.
+10. Undo removes the attribute and the style element and puts back each touched element's style
+    attribute exactly as it was (or removes it if there was none). Every run starts with that undo,
+    so running Declutter twice on a page gives the same result as running it once.
+
+### The debug table
+
+In a debug build, `WEBKIT95_DECLUTTER_DEBUG=1` makes every run log the guard's reasoning, one line
+per rule, and adds the page measurement to the control socket's `state` (`declutter.last.measure`
+and `declutter.last.table`). A line looks like
+
+```
+div[data-testid="ad-unit"] ad p0.97 c0.93 -> hide [flow 41.9% t14, flow 0.0% t0, ...]
+section.promo-hero promotion -> skipped, too large (45.0%) [flow 45.0% t210]
+union 42.3% of the window, 0.3% of the text -> hide 9 rules, skipped 1
+```
+
+with the selector, the label, Jev's probability and confidence when the run called Jev, the
+verdict, and per element whether it is in flow or an overlay, its share of the window, its text
+length, the index of the matched element containing it and any protection reason. Page text never
+appears. Release builds ignore the variable, and the control socket does not exist in them. The
+verdicts alone (`declutter.last.verdicts`) are always in the state.
 
 ## Protections
 
@@ -207,6 +235,50 @@ What the real run changed:
 Judgment calls worth a look: allrecipes' "rate this recipe" bar was labeled social and hidden, and
 a BBC drawer backdrop was labeled cookie (0.91) and hidden. Neither is protected content.
 
+## The bbc.com refusal, fixed 2026-09-30
+
+A user pressed Declutter on bbc.com and got "Declutter stopped: it would hide 68% of the window, so
+nothing was hidden". Reproduced with the shipped build and one real call, at 1100 by 800 the same
+page refused at 128 percent. The page world measurement of the 17 rules showed one box: the top
+billboard ad container, 41.9 percent of the window, matched by `div[data-testid="ad-unit"]`,
+`div[data-testid="dotcom-top"]` and `div.dotcom-ad-inner`, nested three deep, plus
+`div.dotcom-ad-text-wrapper` at 3.5 percent inside it. The guard summed every matched element, so
+one ad counted three times: 41.9 x 3 + 3.5 = 128.6. At the user's larger window the same ad is
+about 23 percent, and 3 x 22.7 is the 68 they saw. Every other match was off screen or empty, and
+nothing protected or main content was involved. Jev's labels were right.
+
+The guard now judges each rule on its own and counts the union (steps 7 and 8 above). The proposed
+blind per element limit was checked against the real data before it was adopted: the genuine
+billboard is 41.9 percent of a small window on the home page and 44.1 percent on the news section,
+so a plain 40 percent skip would have left the biggest ad on the page visible. The limit therefore
+exempts ad labeled elements with almost no text (the slot says "Advertisement", 13 characters), which
+is what Jev is told to label ad even when empty. A big block with text is still skipped on its own,
+and the aggregate backstop still refuses when the remainder is too large.
+
+| Page | Before (shipped build) | After (fixed build) | Union | Old sum | Calls |
+| --- | --- | --- | --- | --- | --- |
+| bbc.com home, first variant | refused at 128% | hid 14 elements (rerun from the saved template) | 17.7% | 55.7% | 1 then 0 |
+| bbc.com home, second variant | | hid 14 elements: 15 ad rules, 2 social follow widgets | 17.7% | 55.7% | 1 |
+| bbc.com/news | | hid 6 elements: 8 ad rules, 2 social follow widgets | 44.1% | 133.1% | 1 |
+| bbc.com/news/technology (redirects to /technology, same template as /news) | | hid 9 elements (saved template) | 8.8% | 27.1% | 0 |
+
+Protected lost was zero on every page (main, article, nav, header, h1, forms, largest paragraph), and
+the screenshots (`build/shots/bbc-*-before-1x.png` and `-after-1x.png`) show the billboard gone
+with the header, the navigation and every headline in place. The "BBC subscribers" bar at the
+bottom stays on every page because Jev labels it keep (0.95 to 0.97); the two drawer backdrops
+were labeled cookie under the threshold (0.19 to 0.88) and stay too. Three real calls in all.
+
+The three runs that called Jev are regression fixtures in `Tests/Webkit95KitTests/Resources/declutter`
+(public structure only: selectors, tags, class and test id tokens cut to 80 characters, the answers,
+and the measurement with no text), replayed by `ReplayTests` through the parser, the rules and the
+guard. Each asserts the guard hides the ads and social widgets, hides nothing protected, stays under
+the backstop, and that the old sum would have refused. `scripts/declutter-fixture.py` writes one from
+a control socket state dump or an eval row (`WEBKIT95_DECLUTTER_DEBUG=1` for the measurement).
+
+Known weakness left in place: the fractions are shares of the window, so the same billboard is 18
+to 44 percent depending on the creative served and the window size. In a window short enough for
+one empty slot to pass half the height, the backstop still refuses the whole page.
+
 ## Limits
 
 - Cosmetic only: ad and tracker requests still happen. A network level blocker is a separate item
@@ -220,13 +292,19 @@ a BBC drawer backdrop was labeled cookie (0.91) and hidden. Neither is protected
   not hiding the wrong thing).
 - Pages with a hidden login modal (a password input in the DOM) are skipped.
 - Single page apps that change the address without a load keep the previous page's hiding.
+- The guard's fractions are shares of the window, so a small window makes one billboard ad a
+  large share; the backstop can still refuse a page whose one empty slot passes half the window.
 
 ## Where the code is
 
 - `Sources/Webkit95Kit/Declutter.swift`: policy, labels, stable selectors, element facts and
-  protections, candidates, the request body, the response parser, hide rules, the hide guard,
-  template keys, the cache, sites and consent, failures and status texts, the endpoint, the key
-  and the client over a transport protocol. Tested in `Tests/Webkit95KitTests/DeclutterTests.swift`.
+  protections, candidates, the request body, the response parser, hide rules, the hide guard (per
+  rule verdicts, the union of frames, the review and the debug table), template keys, the cache,
+  sites and consent, failures and status texts, the endpoint, the key and the client over a
+  transport protocol. Tested in `Tests/Webkit95KitTests/DeclutterTests.swift`, with the real page
+  fixtures in `Tests/Webkit95KitTests/Resources/declutter`.
+- `scripts/declutter-eval.py`: the real evaluation (`DECLUTTER_REAL=1`), with a kept support dir,
+  screenshots and the debug table; `scripts/declutter-fixture.py` turns a run into a fixture.
 - `Sources/webkit95/DeclutterScript.swift`: the extractor, measurer, applier and undo, run with
   `callAsyncJavaScript` in the `webkit95-declutter` content world.
 - `Sources/webkit95/Declutter.swift`: the URLSession transport, the app wide service (key, cache,
